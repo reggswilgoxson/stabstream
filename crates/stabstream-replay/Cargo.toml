@@ -1,0 +1,17 @@
+[package]
+name         = "stabstream-replay"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Compressed stream logging and playback for stabstream"
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+tokio.workspace        = true
+zstd.workspace         = true
+thiserror.workspace    = true
+tracing.workspace      = true

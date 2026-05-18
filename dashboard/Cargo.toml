@@ -1,0 +1,24 @@
+[package]
+name         = "stabstream-dashboard"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "ratatui TUI for live stabstream syndrome monitoring"
+
+[[bin]]
+name = "stabstream"
+path = "src/main.rs"
+
+[dependencies]
+stabstream-core        = { path = "../crates/stabstream-core" }
+stabstream-deserialize = { path = "../crates/stabstream-deserialize" }
+stabstream-validate    = { path = "../crates/stabstream-validate" }
+tokio.workspace              = true
+ratatui.workspace            = true
+crossterm.workspace          = true
+tracing.workspace            = true
+tracing-subscriber.workspace = true
+anyhow.workspace             = true

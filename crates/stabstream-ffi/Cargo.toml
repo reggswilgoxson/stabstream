@@ -1,0 +1,24 @@
+[package]
+name         = "stabstream-ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "C FFI and Python bindings for stabstream"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python  = ["dep:pyo3"]
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+pyo3                   = { workspace = true, optional = true }
+
+[build-dependencies]
+cbindgen.workspace = true

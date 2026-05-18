@@ -1,0 +1,20 @@
+{
+  "schema_id": "f8c1h754-8i16-4f4e-df7g-5j6i2h1e9g05",
+  "version": "1.0.0",
+  "name": "repetition_d11",
+  "description": "Distance-11 repetition code (bit-flip or phase-flip, illustrative schema — production schema contains all 10 stabilizers)",
+  "code_type": "repetition",
+  "distance": 11,
+  "qubit_count": 11,
+  "ancilla_count": 10,
+  "stabilizers": [
+    { "id": 0, "type": "Z", "qubits": [0, 1] },
+    { "id": 1, "type": "Z", "qubits": [1, 2] },
+    { "id": 2, "type": "Z", "qubits": [2, 3] },
+    { "id": 3, "type": "Z", "qubits": [3, 4] },
+    { "id": 4, "type": "Z", "qubits": [4, 5] },
+    { "id": 5, "type": "Z", "qubits": [5, 6] }
+  ],
+  "measurement_cycle_us": 0.5,
+  "ancilla_layout": "linear"
+}

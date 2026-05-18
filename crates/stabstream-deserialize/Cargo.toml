@@ -1,0 +1,18 @@
+[package]
+name         = "stabstream-deserialize"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Zero-copy QSSF binary parser and async pipeline for stabstream"
+
+[dependencies]
+stabstream-core     = { path = "../stabstream-core" }
+stabstream-validate = { path = "../stabstream-validate" }
+tokio.workspace     = true
+nom.workspace       = true
+bytes.workspace     = true
+thiserror.workspace = true
+tracing.workspace   = true

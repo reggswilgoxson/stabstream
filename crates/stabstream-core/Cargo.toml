@@ -1,0 +1,15 @@
+[package]
+name         = "stabstream-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "SyndromeFrame types, CodeType enum, and stabilizer models for stabstream"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace    = true
+serde_json.workspace = true
+uuid.workspace     = true
