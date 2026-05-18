@@ -32,8 +32,8 @@ impl<R: Read> StreamPlayer<R> {
         // Extract payload_len from header bytes [24..28]
         let payload_len = u32::from_le_bytes(hdr_buf[24..28].try_into().unwrap()) as usize;
 
-        // 2-byte de_len prefix + payload body + 6-byte terminator
-        let remainder = 2 + payload_len + 6;
+        // payload_len includes the 2-byte de_len prefix; add 6 for the terminator
+        let remainder = payload_len + 6;
         let mut rest = vec![0u8; remainder];
         self.decoder
             .read_exact(&mut rest)

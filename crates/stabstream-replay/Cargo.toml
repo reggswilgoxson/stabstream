@@ -16,3 +16,7 @@ zstd.workspace         = true
 thiserror.workspace    = true
 tracing.workspace      = true
 crc32fast.workspace    = true
+
+[dev-dependencies]
+stabstream-validate = { path = "../stabstream-validate" }
+uuid.workspace      = true

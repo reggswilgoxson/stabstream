@@ -125,6 +125,10 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             (h, saved)
         };
 
+        // Accumulate a full-frame CRC that matches what StreamRecorder writes.
+        let mut frame_hasher = crc32fast::Hasher::new();
+        frame_hasher.update(&saved_hdr);
+
         // --- Parse syndrome payload fields ---
         let ancilla = frame_hdr.ancilla_count as usize;
 
@@ -144,6 +148,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                     declared: 2,
                     actual: self.ring_buf.available_read(),
                 })?;
+            frame_hasher.update(b);
             u16::from_le_bytes([b[0], b[1]]) as usize
         };
         self.ring_buf.consume(2);
@@ -184,20 +189,21 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         // - ring_buf is heap-allocated and stable in memory
         // - we will not call write() or consume() while this frame is live
         //   (next_frame takes &'a mut self, so no other mutable access is possible)
+        frame_hasher.update(de_slice);
         let de_slice: &'a [u8] =
             unsafe { std::slice::from_raw_parts(de_slice.as_ptr(), de_slice.len()) };
         self.ring_buf.consume(de_len);
 
-        let meas_slice =
+        let meas_raw =
             self.ring_buf
                 .peek(ancilla)
                 .ok_or(StabstreamError::PayloadLengthMismatch {
                     declared: ancilla as u32,
                     actual: self.ring_buf.available_read(),
                 })?;
-        let meas_slice: &'a [i8] = unsafe {
-            std::slice::from_raw_parts(meas_slice.as_ptr().cast::<i8>(), meas_slice.len())
-        };
+        frame_hasher.update(meas_raw);
+        let meas_slice: &'a [i8] =
+            unsafe { std::slice::from_raw_parts(meas_raw.as_ptr().cast::<i8>(), meas_raw.len()) };
         self.ring_buf.consume(ancilla);
 
         let timing_slice: &'a [u16] = if timing_len > 0 {
@@ -208,6 +214,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                         declared: timing_len as u32,
                         actual: self.ring_buf.available_read(),
                     })?;
+            frame_hasher.update(raw);
             let slice = unsafe { std::slice::from_raw_parts(raw.as_ptr().cast::<u16>(), ancilla) };
             self.ring_buf.consume(timing_len);
             slice
@@ -223,6 +230,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                         declared: parity_len as u32,
                         actual: self.ring_buf.available_read(),
                     })?;
+            frame_hasher.update(raw);
             let slice = unsafe { std::slice::from_raw_parts(raw.as_ptr(), raw.len()) };
             self.ring_buf.consume(parity_len);
             slice
@@ -230,15 +238,15 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             &[]
         };
 
-        // Validate frame terminator: 0xFFFF sentinel (2 bytes) + CRC32 of header (4 bytes).
+        // Validate frame terminator: 0xFFFF sentinel (2 bytes) + CRC32 of full frame (4 bytes).
+        let expected_term_crc = frame_hasher.finalize();
         if self.fill_until(6).await? {
             if let Some(term) = self.ring_buf.peek(6) {
                 let sentinel = u16::from_le_bytes([term[0], term[1]]);
                 let stored_crc = u32::from_le_bytes(term[2..6].try_into().unwrap());
-                let expected_crc = crc32fast::hash(&saved_hdr);
-                if sentinel != 0xFFFF || stored_crc != expected_crc {
+                if sentinel != 0xFFFF || stored_crc != expected_term_crc {
                     return Err(StabstreamError::ChecksumMismatch {
-                        expected: expected_crc,
+                        expected: expected_term_crc,
                         actual: stored_crc,
                     });
                 }

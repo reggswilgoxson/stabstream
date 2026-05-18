@@ -65,9 +65,14 @@ pub fn synthetic_surface_d5_stream(frame_count: u64, fire_rate: f64) -> Vec<u8> 
         };
         out.extend_from_slice(meas_u8);
 
-        // Terminator: 0xFFFF + CRC of header
+        // Terminator: 0xFFFF + CRC of full frame (header + de_len + de_rle + meas)
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&hdr_bytes);
+        hasher.update(&(de_rle.len() as u16).to_le_bytes());
+        hasher.update(&de_rle);
+        hasher.update(meas_u8);
         out.extend_from_slice(&0xFFFFu16.to_le_bytes());
-        out.extend_from_slice(&crc32fast::hash(&hdr_bytes).to_le_bytes());
+        out.extend_from_slice(&hasher.finalize().to_le_bytes());
     }
 
     out
