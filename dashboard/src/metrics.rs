@@ -97,6 +97,20 @@ impl MetricsAggregator {
     pub fn total_frames(&self) -> u64 {
         self.total_frames
     }
+
+    pub fn mean_syndrome_rate(&self) -> f64 {
+        if self.syndrome_rates.is_empty() {
+            return 0.0;
+        }
+        self.syndrome_rates.iter().sum::<f64>() / self.syndrome_rates.len() as f64
+    }
+
+    pub fn mean_fire_rate_pct(&self) -> f64 {
+        if self.fire_rates.is_empty() {
+            return 0.0;
+        }
+        self.fire_rates.iter().sum::<f64>() / self.fire_rates.len() as f64
+    }
 }
 
 fn push_window<T>(queue: &mut VecDeque<T>, value: T) {
