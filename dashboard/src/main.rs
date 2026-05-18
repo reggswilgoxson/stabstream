@@ -144,7 +144,7 @@ async fn run_stim_encoder(
 async fn run_stream_loop<R: AsyncRead + Unpin>(
     mut stream: QssfStream<R>,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-) -> Result<()> {
+) -> Result<MetricsAggregator> {
     let mut metrics = MetricsAggregator::new();
     let schema_name = "unknown".to_string();
     let mut round: u64 = 0;
@@ -189,7 +189,60 @@ async fn run_stream_loop<R: AsyncRead + Unpin>(
         }
     }
 
-    Ok(())
+    Ok(metrics)
+}
+
+fn print_run_summary(metrics: &MetricsAggregator, elapsed: Duration, source: &str) {
+    let frames = metrics.total_frames();
+    let throughput = if elapsed.as_secs_f64() > 0.0 {
+        frames as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    let [c1, c2, c3, c4] = metrics.cluster_histogram();
+    let cluster_total = c1 + c2 + c3 + c4;
+    let pct = |n: u64| {
+        if cluster_total > 0 {
+            n as f64 / cluster_total as f64 * 100.0
+        } else {
+            0.0
+        }
+    };
+
+    let sep = "─".repeat(56);
+    println!("\n── stabstream run summary {sep}");
+    println!("  source      {source}");
+    println!(
+        "  frames      {:>10}    elapsed  {:.2} s    throughput  {:.0} f/s",
+        frames,
+        elapsed.as_secs_f64(),
+        throughput
+    );
+    println!("{sep}──");
+    println!(
+        "  syndrome    mean {:>6.2}    latest {:>6.2}",
+        metrics.mean_syndrome_rate(),
+        metrics.latest_syndrome_rate()
+    );
+    println!(
+        "  fire rate   mean {:>5.1}%    latest {:>5.1}%",
+        metrics.mean_fire_rate_pct(),
+        metrics.latest_fire_rate_pct()
+    );
+    println!(
+        "  latency     p50  {:>5} µs   p99    {:>5} µs",
+        metrics.latency_p50_ns() / 1_000,
+        metrics.latency_p99_ns() / 1_000,
+    );
+    println!("  drop rate   {:.2}%", metrics.drop_rate() * 100.0);
+    println!("{sep}──");
+    println!("  cluster histogram");
+    println!("    size 1    {:>7}  {:>5.1}%", c1, pct(c1));
+    println!("    size 2    {:>7}  {:>5.1}%", c2, pct(c2));
+    println!("    size 3    {:>7}  {:>5.1}%", c3, pct(c3));
+    println!("    size 4+   {:>7}  {:>5.1}%", c4, pct(c4));
+    println!("{sep}──");
 }
 
 #[tokio::main]
@@ -215,6 +268,7 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
+    let t_start = Instant::now();
     let result = if source.starts_with("tcp://") {
         let addr = source.trim_start_matches("tcp://");
         match tokio::net::TcpStream::connect(addr).await {
@@ -283,9 +337,18 @@ async fn main() -> Result<()> {
         }
     };
 
+    let elapsed = t_start.elapsed();
+
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    result
+    match result {
+        Ok(ref metrics) if metrics.total_frames() > 0 => {
+            print_run_summary(metrics, elapsed, &source);
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
