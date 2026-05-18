@@ -43,7 +43,7 @@ impl PySyndromeFrame {
     }
 
     fn meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.meas_results)
+        PyBytes::new_bound(py, &self.meas_results)
     }
 
     fn __repr__(&self) -> String {

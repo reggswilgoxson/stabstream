@@ -86,9 +86,15 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
     /// Read and return the next parsed, validated [`SyndromeFrame`].
     ///
     /// Returns `Ok(None)` on clean end-of-stream.
+    ///
+    /// When the `otel` feature is enabled and `stabstream_core::otel::install()`
+    /// has been called, this method emits the following spans exported via OTLP:
+    /// - `qssf.frame_parse`  — covers header + payload deserialization
+    /// - `qssf.frame_validate` — covers parity/timing validation
     pub async fn next_frame<'a>(
         &'a mut self,
     ) -> Result<Option<SyndromeFrame<'a>>, StabstreamError> {
+        let parse_span = tracing::info_span!("qssf.frame_parse");
         // Consume the file header on the first call.
         if !self.header_consumed {
             if !self.fill_until(26).await? {
@@ -253,6 +259,8 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             parity_checks: parity_slice,
         };
 
+        drop(parse_span);
+
         // Validation
         let frame = SyndromeFrame {
             header: frame_hdr,
@@ -260,6 +268,12 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             metadata: None,
             annotations: None,
         };
+
+        let _validate_span = tracing::info_span!(
+            "qssf.frame_validate",
+            frame_id = frame.header.frame_id,
+        )
+        .entered();
 
         match self.config.validation {
             ValidationPolicy::StrictParity => {

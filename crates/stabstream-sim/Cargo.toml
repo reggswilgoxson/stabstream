@@ -1,0 +1,25 @@
+[package]
+name         = "stabstream-sim"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Stim-backed QSSF syndrome stream simulator with TCP server"
+
+[[bin]]
+name = "stabstream-sim"
+path = "src/main.rs"
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-convert     = { path = "../stabstream-convert" }
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+tokio.workspace    = true
+clap.workspace     = true
+anyhow.workspace   = true
+tracing.workspace  = true
+tracing-subscriber.workspace = true
+uuid.workspace     = true
+crc32fast.workspace = true
