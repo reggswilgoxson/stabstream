@@ -1,5 +1,5 @@
 {
-  "schema_id": "d6a9f532-6g14-4d2c-bd5e-3h4g0f9c7e03",
+  "schema_id": "d6a9f532-6014-4d2c-bd5e-3b4a0f9c7e03",
   "version": "1.0.0",
   "name": "honeycomb_d4",
   "description": "Distance-4 honeycomb (Floquet) code (illustrative schema — production schema contains the full lattice)",

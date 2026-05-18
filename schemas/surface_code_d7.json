@@ -1,5 +1,5 @@
 {
-  "schema_id": "c5f8e421-5f13-4c1b-ac4d-2g3f9e8b6d02",
+  "schema_id": "c5f8e421-5f13-4c1b-ac4d-2a3f9e8b6d02",
   "version": "1.0.0",
   "name": "surface_code_d7",
   "description": "Distance-7 rotated surface code (illustrative schema — production schema contains all 48 stabilizers)",

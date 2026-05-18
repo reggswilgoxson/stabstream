@@ -87,8 +87,15 @@ pub struct SyndromeFrame<'buf> {
 
 impl<'buf> SyndromeFrame<'buf> {
     /// Count the number of detector events that fired this round.
+    ///
+    /// Uses the QSSF RLE token layout directly: tokens with mode-bit 1
+    /// represent runs of fired events; the 7-bit run length is their count.
     pub fn detector_event_count(&self) -> u32 {
-        // TODO: decode RLE then popcount
-        todo!("implement RLE decoder in stabstream-deserialize::rle")
+        self.payload
+            .detector_events
+            .iter()
+            .filter(|&&t| t & 0x80 != 0)
+            .map(|&t| (t & 0x7F) as u32)
+            .sum()
     }
 }

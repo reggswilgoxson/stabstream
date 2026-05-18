@@ -56,15 +56,38 @@ impl SchemaRegistry {
     }
 
     /// Load all `.json` schema files from a directory.
-    pub fn load_dir(&mut self, _path: &std::path::Path) -> Result<usize, StabstreamError> {
-        // TODO: walk directory, parse each JSON file, insert into self.schemas
-        todo!("implement directory schema loading")
+    pub fn load_dir(&mut self, path: &std::path::Path) -> Result<usize, StabstreamError> {
+        let mut loaded = 0;
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let json = std::fs::read_to_string(&path)?;
+            let schema: HardwareSchema = serde_json::from_str(&json)?;
+            self.schemas.insert(schema.schema_id, schema);
+            loaded += 1;
+        }
+        Ok(loaded)
     }
 
-    /// Load the built-in schemas bundled with the crate.
+    /// Load the built-in schemas bundled with the crate at compile time.
     pub fn with_builtins() -> Result<Self, StabstreamError> {
-        // TODO: use include_str! to embed the schemas from ../../schemas/
-        todo!("implement built-in schema loading")
+        const BUILTIN_SCHEMAS: &[&str] = &[
+            include_str!("../../../schemas/surface_code_d3.json"),
+            include_str!("../../../schemas/surface_code_d5.json"),
+            include_str!("../../../schemas/surface_code_d7.json"),
+            include_str!("../../../schemas/honeycomb_d4.json"),
+            include_str!("../../../schemas/color_code_d5.json"),
+            include_str!("../../../schemas/repetition_d11.json"),
+        ];
+        let mut registry = Self::new();
+        for &json in BUILTIN_SCHEMAS {
+            let schema: HardwareSchema = serde_json::from_str(json)?;
+            registry.schemas.insert(schema.schema_id, schema);
+        }
+        Ok(registry)
     }
 
     /// Look up a schema by UUID.
@@ -74,8 +97,37 @@ impl SchemaRegistry {
             .ok_or(StabstreamError::SchemaNotFound(*id))
     }
 
-    /// Insert a schema into the registry, returning any previously stored schema for that UUID.
+    /// Insert a schema, returning any previously stored schema for that UUID.
     pub fn insert(&mut self, schema: HardwareSchema) -> Option<HardwareSchema> {
         self.schemas.insert(schema.schema_id, schema)
+    }
+
+    /// Number of schemas currently registered.
+    pub fn len(&self) -> usize {
+        self.schemas.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.schemas.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtins_load() {
+        let reg = SchemaRegistry::with_builtins().unwrap();
+        assert_eq!(reg.len(), 6, "expected 6 built-in schemas");
+    }
+
+    #[test]
+    fn builtin_surface_d5_uuid() {
+        let reg = SchemaRegistry::with_builtins().unwrap();
+        let id: Uuid = "a3f7c210-4e12-4b0a-9b3c-1f2e8d7a5c01".parse().unwrap();
+        let schema = reg.get(&id).unwrap();
+        assert_eq!(schema.distance, 5);
+        assert_eq!(schema.qubit_count, 25);
     }
 }
