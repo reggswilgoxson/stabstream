@@ -1,0 +1,13 @@
+/target
+Cargo.lock
+*.qssf
+*.qssf.gz
+*.dem
+**/*.rs.bk
+.DS_Store
+.idea/
+.vscode/
+cbindgen-output/
+dist/
+__pycache__/
+*.pyc

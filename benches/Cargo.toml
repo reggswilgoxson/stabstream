@@ -1,0 +1,26 @@
+[package]
+name         = "stabstream-benches"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Criterion benchmarks for stabstream parse throughput and validator overhead"
+
+[[bench]]
+name    = "parse_throughput"
+harness = false
+
+[[bench]]
+name    = "validate_overhead"
+harness = false
+
+[dependencies]
+stabstream-core        = { path = "../crates/stabstream-core" }
+stabstream-deserialize = { path = "../crates/stabstream-deserialize" }
+stabstream-validate    = { path = "../crates/stabstream-validate" }
+tokio.workspace        = true
+
+[dev-dependencies]
+criterion.workspace = true

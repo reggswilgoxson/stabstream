@@ -1,0 +1,18 @@
+{
+  "schema_id": "b1e4d309-3c11-4a09-8b2b-0e1f7c6a4b00",
+  "version": "1.0.0",
+  "name": "surface_code_d3",
+  "description": "Distance-3 rotated surface code (illustrative schema — production schema contains all 8 stabilizers)",
+  "code_type": "surface",
+  "distance": 3,
+  "qubit_count": 9,
+  "ancilla_count": 8,
+  "stabilizers": [
+    { "id": 0, "type": "X", "qubits": [0, 1, 3, 4] },
+    { "id": 1, "type": "Z", "qubits": [1, 2, 4, 5] },
+    { "id": 2, "type": "X", "qubits": [3, 4, 6, 7] },
+    { "id": 3, "type": "Z", "qubits": [4, 5, 7, 8] }
+  ],
+  "measurement_cycle_us": 1.0,
+  "ancilla_layout": "row_major"
+}

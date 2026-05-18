@@ -1,0 +1,13 @@
+[package]
+name         = "stabstream-validate"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Parity checks, timing validation, and bounds enforcement for stabstream"
+
+[dependencies]
+stabstream-core = { path = "../stabstream-core" }
+thiserror.workspace = true
