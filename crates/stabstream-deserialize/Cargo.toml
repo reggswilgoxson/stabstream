@@ -8,6 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 description  = "Zero-copy QSSF binary parser and async pipeline for stabstream"
 
+[features]
+otel = ["stabstream-core/otel"]
+
 [dependencies]
 stabstream-core     = { path = "../stabstream-core" }
 stabstream-validate = { path = "../stabstream-validate" }

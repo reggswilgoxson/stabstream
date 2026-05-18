@@ -8,8 +8,25 @@ repository.workspace = true
 rust-version.workspace = true
 description  = "SyndromeFrame types, CodeType enum, and stabilizer models for stabstream"
 
+[features]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+]
+
 [dependencies]
 thiserror.workspace = true
 serde.workspace    = true
 serde_json.workspace = true
 uuid.workspace     = true
+tracing.workspace  = true
+
+# Optional OTel deps (only when "otel" feature is enabled)
+opentelemetry       = { workspace = true, optional = true }
+opentelemetry_sdk   = { workspace = true, optional = true }
+opentelemetry-otlp  = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber  = { workspace = true, optional = true }

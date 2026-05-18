@@ -1,0 +1,21 @@
+[package]
+name         = "stabstream-py"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "PyO3-based Python bindings for stabstream SyndromeFrame, CodeType, and DecoderResult"
+
+[lib]
+name      = "stabstream"
+crate-type = ["cdylib"]
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-decoder     = { path = "../stabstream-decoder" }
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+stabstream-validate    = { path = "../stabstream-validate" }
+pyo3.workspace         = true
+tokio.workspace        = true

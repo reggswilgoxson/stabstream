@@ -1,0 +1,22 @@
+[package]
+name         = "stabstream-convert"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Stim detector-event importer and QSSF binary exporter for stabstream"
+
+[[bin]]
+name = "stabstream-convert"
+path = "src/main.rs"
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+thiserror.workspace    = true
+uuid.workspace         = true
+crc32fast.workspace    = true
+clap.workspace         = true
+anyhow.workspace       = true

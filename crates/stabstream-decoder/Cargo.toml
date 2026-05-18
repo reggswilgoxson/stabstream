@@ -1,0 +1,13 @@
+[package]
+name         = "stabstream-decoder"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Decoder trait and reference implementations for stabstream QEC pipelines"
+
+[dependencies]
+stabstream-core = { path = "../stabstream-core" }
+thiserror.workspace = true
