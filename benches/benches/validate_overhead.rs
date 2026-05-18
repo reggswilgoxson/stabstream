@@ -15,6 +15,7 @@ fn bench_validate_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("validate");
     group.throughput(Throughput::Elements(1));
 
+    // Use a small ring buffer so each iteration avoids a 4 MiB mmap/munmap.
     group.bench_function("strict_parity_surface_d5", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -22,6 +23,7 @@ fn bench_validate_overhead(c: &mut Criterion) {
                 let reader = tokio::io::BufReader::new(cursor);
                 let config = StreamConfig {
                     validation: ValidationPolicy::StrictParity,
+                    ring_buf_bytes: 4096,
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);
@@ -38,6 +40,7 @@ fn bench_validate_overhead(c: &mut Criterion) {
                 let reader = tokio::io::BufReader::new(cursor);
                 let config = StreamConfig {
                     validation: ValidationPolicy::Disabled,
+                    ring_buf_bytes: 4096,
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);

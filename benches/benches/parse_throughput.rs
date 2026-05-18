@@ -15,6 +15,8 @@ fn bench_parse_surface_d5(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
     group.throughput(Throughput::Elements(1));
 
+    // Use a small ring buffer so each iteration avoids a 4 MiB mmap/munmap.
+    // The synthetic single-frame payload is ~135 bytes; 4 KiB is ample.
     group.bench_function("surface_d5_parse_only", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -22,6 +24,7 @@ fn bench_parse_surface_d5(c: &mut Criterion) {
                 let reader = tokio::io::BufReader::new(cursor);
                 let config = StreamConfig {
                     validation: ValidationPolicy::Disabled,
+                    ring_buf_bytes: 4096,
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);
@@ -38,6 +41,7 @@ fn bench_parse_surface_d5(c: &mut Criterion) {
                 let reader = tokio::io::BufReader::new(cursor);
                 let config = StreamConfig {
                     validation: ValidationPolicy::CrcOnly,
+                    ring_buf_bytes: 4096,
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);
