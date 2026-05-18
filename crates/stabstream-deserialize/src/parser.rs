@@ -71,7 +71,7 @@ pub fn parse_frame_header(input: &[u8]) -> Result<(FrameHeader, usize), Stabstre
         payload_len: u32::from_le_bytes(input[24..28].try_into().unwrap()),
         code_type: input[28],
         distance: input[29],
-        // bytes 30..32 are reserved padding
+        flags: u16::from_le_bytes(input[30..32].try_into().unwrap()),
         crc32: actual_crc,
     };
 
@@ -89,7 +89,7 @@ pub fn write_frame_header(h: &FrameHeader) -> [u8; 36] {
     buf[24..28].copy_from_slice(&h.payload_len.to_le_bytes());
     buf[28] = h.code_type;
     buf[29] = h.distance;
-    // bytes 30..32 reserved = 0
+    buf[30..32].copy_from_slice(&h.flags.to_le_bytes());
     let crc = crc32fast::hash(&buf[0..32]);
     buf[32..36].copy_from_slice(&crc.to_le_bytes());
     buf
@@ -109,6 +109,7 @@ mod tests {
             payload_len: 0,
             code_type: 0x01,
             distance: 5,
+            flags: 0,
             crc32: 0, // filled by write_frame_header
         };
         let bytes = write_frame_header(&h);

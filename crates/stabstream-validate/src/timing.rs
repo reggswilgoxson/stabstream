@@ -33,6 +33,7 @@ mod tests {
                 payload_len: 0,
                 code_type: 0x01,
                 distance: 3,
+                flags: 0,
                 crc32: 0,
             },
             payload: SyndromePayload {
