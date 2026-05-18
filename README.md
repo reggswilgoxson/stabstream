@@ -1,5 +1,15 @@
 # stabstream
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Language-Rust-orange?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Platform-Cross--platform-blue?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Status-Active-success?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/License-MIT%2FApache--2.0-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Performance-70K%2B%20frames%2Fs-purple?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Safety-Memory%20Safe%20Rust-yellow?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/QEC-Ready-red?style=for-the-badge" />
+</p>
+
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
 stream deserializer and analysis runtime written in Rust, with C FFI and Python
 bindings.
