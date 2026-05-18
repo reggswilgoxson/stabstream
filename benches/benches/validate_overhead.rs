@@ -25,7 +25,8 @@ fn bench_validate_overhead(c: &mut Criterion) {
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);
-                criterion::black_box(stream.next_frame().await.unwrap())
+                let frame = stream.next_frame().await.unwrap();
+                criterion::black_box(frame.map(|f| f.header.frame_id))
             })
         });
     });
@@ -40,7 +41,8 @@ fn bench_validate_overhead(c: &mut Criterion) {
                     ..Default::default()
                 };
                 let mut stream = QssfStream::new(reader, config);
-                criterion::black_box(stream.next_frame().await.unwrap())
+                let frame = stream.next_frame().await.unwrap();
+                criterion::black_box(frame.map(|f| f.header.frame_id))
             })
         });
     });
