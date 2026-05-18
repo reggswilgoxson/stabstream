@@ -1,5 +1,5 @@
 {
-  "schema_id": "f8c1h754-8i16-4f4e-df7g-5j6i2h1e9g05",
+  "schema_id": "f8c10754-8016-4f4e-9f7b-5c6a2b1e9004",
   "version": "1.0.0",
   "name": "repetition_d11",
   "description": "Distance-11 repetition code (bit-flip or phase-flip, illustrative schema — production schema contains all 10 stabilizers)",

@@ -45,3 +45,5 @@ tracing      = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # UUID
 uuid         = { version = "1", features = ["v4", "serde"] }
+# CRC32 (for frame/header integrity)
+crc32fast    = "1"

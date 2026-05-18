@@ -18,12 +18,33 @@ impl<R: Read> StreamPlayer<R> {
         })
     }
 
-    /// Read and return the raw bytes of the next frame, or `None` on end-of-stream.
+    /// Read and return the raw bytes of the next frame (header + payload),
+    /// or `Ok(None)` on clean end-of-stream.
     pub fn next_frame_bytes(&mut self) -> Result<Option<Vec<u8>>, StabstreamError> {
-        // TODO: read FrameHeader length prefix from self.decoder,
-        //       then read payload_len bytes and return the concatenated buffer.
-        let _ = &self.decoder;
-        todo!("implement frame decompression and read")
+        // Read 36-byte frame header
+        let mut hdr_buf = [0u8; 36];
+        match self.decoder.read_exact(&mut hdr_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(StabstreamError::Io(e)),
+        }
+
+        // Extract payload_len from header bytes [24..28]
+        let payload_len = u32::from_le_bytes(hdr_buf[24..28].try_into().unwrap()) as usize;
+
+        // 2-byte de_len prefix + payload body + 6-byte terminator
+        let remainder = 2 + payload_len + 6;
+        let mut rest = vec![0u8; remainder];
+        self.decoder
+            .read_exact(&mut rest)
+            .map_err(StabstreamError::Io)?;
+
+        let mut out = Vec::with_capacity(36 + remainder);
+        out.extend_from_slice(&hdr_buf);
+        out.extend_from_slice(&rest);
+
+        self.frames_read += 1;
+        Ok(Some(out))
     }
 
     pub fn frames_read(&self) -> u64 {
