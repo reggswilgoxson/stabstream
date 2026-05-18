@@ -84,7 +84,8 @@ async fn encode_one_shot(
         payload_len,
         code_type: 0x01, // SurfaceCode; no timing/parity optional sections
         distance: 0,     // not reported by stim detect
-        crc32: 0,        // filled by write_frame_header
+        flags: 0,
+        crc32: 0, // filled by write_frame_header
     };
     let hdr_bytes = write_frame_header(&hdr);
     writer.write_all(&hdr_bytes).await?;

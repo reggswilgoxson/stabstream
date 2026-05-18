@@ -5,6 +5,7 @@ use stabstream_core::{
 };
 use stabstream_validate::policy::ValidationPolicy;
 use tokio::io::{AsyncRead, AsyncReadExt};
+use uuid::Uuid;
 
 use crate::{parser, ring_buffer::RingBuffer};
 
@@ -33,6 +34,8 @@ pub struct QssfStream<R: AsyncRead + Unpin> {
     ring_buf: RingBuffer,
     /// True after the file header has been parsed.
     header_consumed: bool,
+    /// Schema UUID read from the file header; used for StrictParity validation.
+    schema_id: Uuid,
 }
 
 impl<R: AsyncRead + Unpin> QssfStream<R> {
@@ -43,6 +46,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             config,
             ring_buf: RingBuffer::new(buf_size),
             header_consumed: false,
+            schema_id: Uuid::nil(),
         }
     }
 
@@ -97,7 +101,8 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                         declared: 26,
                         actual: self.ring_buf.available_read(),
                     })?;
-            let (_file_hdr, consumed) = parser::parse_file_header(header_bytes)?;
+            let (file_hdr, consumed) = parser::parse_file_header(header_bytes)?;
+            self.schema_id = file_hdr.schema_id;
             self.ring_buf.consume(consumed);
             self.header_consumed = true;
         }
@@ -106,7 +111,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         if !self.fill_until(36).await? {
             return Ok(None);
         }
-        let frame_hdr: FrameHeader = {
+        let (frame_hdr, saved_hdr): (FrameHeader, [u8; 36]) = {
             let hdr_bytes =
                 self.ring_buf
                     .peek(36)
@@ -115,8 +120,9 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                         actual: self.ring_buf.available_read(),
                     })?;
             let (h, _) = parser::parse_frame_header(hdr_bytes)?;
+            let saved: [u8; 36] = hdr_bytes.try_into().expect("peek returned 36 bytes");
             self.ring_buf.consume(36);
-            h
+            (h, saved)
         };
 
         // --- Parse syndrome payload fields ---
@@ -143,8 +149,8 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         self.ring_buf.consume(2);
 
         // 2. Load all payload bytes into the ring at once.
-        let timing_present = frame_hdr.code_type & 0x02 != 0; // flag bit 1
-        let parity_present = frame_hdr.code_type & 0x04 != 0; // flag bit 2
+        let timing_present = frame_hdr.flags & 0x01 != 0; // flag bit 0: timing offsets present
+        let parity_present = frame_hdr.flags & 0x02 != 0; // flag bit 1: parity checks present
         let timing_len = if timing_present { ancilla * 2 } else { 0 };
         let parity_len = if parity_present {
             ancilla.div_ceil(8)
@@ -224,8 +230,19 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             &[]
         };
 
-        // Consume frame terminator: 0xFFFF (2 bytes) + CRC32 of header (4 bytes).
+        // Validate frame terminator: 0xFFFF sentinel (2 bytes) + CRC32 of header (4 bytes).
         if self.fill_until(6).await? {
+            if let Some(term) = self.ring_buf.peek(6) {
+                let sentinel = u16::from_le_bytes([term[0], term[1]]);
+                let stored_crc = u32::from_le_bytes(term[2..6].try_into().unwrap());
+                let expected_crc = crc32fast::hash(&saved_hdr);
+                if sentinel != 0xFFFF || stored_crc != expected_crc {
+                    return Err(StabstreamError::ChecksumMismatch {
+                        expected: expected_crc,
+                        actual: stored_crc,
+                    });
+                }
+            }
             self.ring_buf.consume(6);
         }
 
@@ -251,8 +268,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                 if let Ok(schema) = self
                     .config
                     .schema_registry
-                    .get(&uuid::Uuid::nil())
-                    // dummy — real usage passes schema_id from file header
+                    .get(&self.schema_id)
                     .map_err(|_| ())
                 {
                     stabstream_validate::parity::check_parity(&frame, schema)?;

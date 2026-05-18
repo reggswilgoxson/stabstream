@@ -1,65 +1,6 @@
 use std::ffi::c_char;
 
-use stabstream_core::error::StabstreamError;
-use stabstream_deserialize::stream::{QssfStream, StreamConfig};
-use stabstream_validate::policy::ValidationPolicy;
-use tokio::io::{AsyncRead, BufReader};
-use tokio::runtime::Runtime;
-
-// ---------------------------------------------------------------------------
-// Private implementation types
-// ---------------------------------------------------------------------------
-
-struct OwnedFrame {
-    frame_id: u64,
-    round: u32,
-    timestamp_ns: u64,
-    qubit_count: u16,
-    ancilla_count: u16,
-    detector_event_count: u32,
-    meas_results: Vec<u8>,
-}
-
-trait FrameProducer: Send {
-    fn next_frame_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, StabstreamError>;
-}
-
-struct QssfProducer<R: AsyncRead + Unpin + Send + 'static> {
-    stream: QssfStream<R>,
-}
-
-impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
-    fn next_frame_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, StabstreamError> {
-        rt.block_on(async {
-            match self.stream.next_frame().await? {
-                Some(frame) => {
-                    let detector_event_count = frame.detector_event_count();
-                    let meas_results = frame
-                        .payload
-                        .meas_results
-                        .iter()
-                        .map(|&v| v as u8)
-                        .collect();
-                    Ok(Some(OwnedFrame {
-                        frame_id: frame.header.frame_id,
-                        round: frame.header.round,
-                        timestamp_ns: frame.header.timestamp_ns,
-                        qubit_count: frame.header.qubit_count,
-                        ancilla_count: frame.header.ancilla_count,
-                        detector_event_count,
-                        meas_results,
-                    }))
-                }
-                None => Ok(None),
-            }
-        })
-    }
-}
-
-struct InnerHandle {
-    runtime: Runtime,
-    source: Box<dyn FrameProducer>,
-}
+use crate::inner::{open_inner, InnerHandle};
 
 // ---------------------------------------------------------------------------
 // Public C ABI types
@@ -106,42 +47,10 @@ pub unsafe extern "C" fn stabstream_open(source: *const c_char) -> *mut Stabstre
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let runtime = match Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    let config = StreamConfig {
-        validation: ValidationPolicy::Disabled,
-        ..Default::default()
-    };
-
-    let producer: Box<dyn FrameProducer> = if source_str.starts_with("tcp://") {
-        let addr = source_str.trim_start_matches("tcp://").to_owned();
-        let tcp = match runtime.block_on(tokio::net::TcpStream::connect(addr)) {
-            Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        Box::new(QssfProducer {
-            stream: QssfStream::new(tcp, config),
-        })
-    } else {
-        let path = source_str.to_owned();
-        let file = match runtime.block_on(tokio::fs::File::open(path)) {
-            Ok(f) => f,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        let reader = BufReader::new(file);
-        Box::new(QssfProducer {
-            stream: QssfStream::new(reader, config),
-        })
-    };
-
-    let inner = Box::new(InnerHandle {
-        runtime,
-        source: producer,
-    });
-    Box::into_raw(inner) as *mut StabstreamHandle
+    match open_inner(source_str) {
+        Ok(inner) => Box::into_raw(Box::new(inner)) as *mut StabstreamHandle,
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// Read the next syndrome frame from `handle` into `out_buf`.
@@ -241,7 +150,6 @@ mod tests {
         for i in 0..3 {
             let n = unsafe { stabstream_next_frame(handle, buf.as_mut_ptr(), buf.len()) };
             assert!(n > 0, "frame {i}: expected bytes written, got {n}");
-            // Verify frame_id increases monotonically.
             let frame_id = u64::from_le_bytes(buf[0..8].try_into().unwrap());
             assert_eq!(frame_id, i as u64, "frame_id mismatch at round {i}");
         }

@@ -50,6 +50,7 @@ pub fn synthetic_surface_d5_stream(frame_count: u64, fire_rate: f64) -> Vec<u8> 
             payload_len,
             code_type: 0x01, // SurfaceCode
             distance: 5,
+            flags: 0,
             crc32: 0, // recomputed by write_frame_header
         };
         let hdr_bytes = write_frame_header(&hdr);

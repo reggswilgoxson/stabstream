@@ -36,6 +36,8 @@ pub struct FrameHeader {
     pub code_type: u8,
     /// Code distance *d*.
     pub distance: u8,
+    /// Per-frame flags (bytes 30–31). Bit 0: timing offsets present. Bit 1: parity checks present.
+    pub flags: u16,
     /// Header integrity checksum.
     pub crc32: u32,
 }
