@@ -1,5 +1,7 @@
 use stabstream_core::{frame::SyndromeFrame, window::SyndromeWindow};
 
+#[cfg(feature = "mwpm")]
+pub mod mwpm;
 pub mod union_find;
 
 /// A single logical-qubit correction suggested by a decoder.
