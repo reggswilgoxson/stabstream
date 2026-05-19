@@ -63,6 +63,8 @@ rand         = { version = "0.8", features = ["small_rng"] }
 rayon        = "1"
 # SVG plotting for threshold curves
 plotters     = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "full_palette"] }
+# memory-mapped files for SHM transport
+memmap2      = "0.9"
 # OpenTelemetry (optional, behind "otel" feature flags)
 opentelemetry       = { version = "0.22", features = ["trace"] }
 opentelemetry_sdk   = { version = "0.22", features = ["trace", "rt-tokio"] }

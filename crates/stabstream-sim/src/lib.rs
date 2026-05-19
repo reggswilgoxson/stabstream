@@ -1,4 +1,6 @@
+pub mod broadcast;
 pub mod noise;
+pub mod shm;
 
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,7 +16,9 @@ use tokio::{
 };
 use uuid::Uuid;
 
+pub use broadcast::{SimBroadcaster, DEFAULT_BROADCAST_CAPACITY};
 pub use noise::{BiasedPauli, CircuitLevelDepolarizing, DemSampler, NoiseModel, ShotResult};
+pub use shm::{ShmConsumer, ShmProducer, MAX_FRAME_SIZE, RING_SLOTS, SHM_SIZE};
 
 /// UUID written into QSSF file headers for Stim-sourced streams.
 pub const STIM_GENERIC_UUID: &str = "00000000-5354-494d-0000-000000000001";
