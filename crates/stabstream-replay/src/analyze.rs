@@ -17,8 +17,8 @@ use crate::player::StreamPlayer;
 const QSSF_MAGIC: [u8; 4] = [0x51, 0x53, 0x53, 0x46];
 // Zstd frame magic bytes.
 const ZSTD_MAGIC: [u8; 4] = [0xFD, 0x2F, 0xB5, 0x28];
-// QSSF file header is 24 bytes (magic u32 + version u16 + schema_id u128 + flags u32).
-const QSSF_FILE_HEADER_LEN: usize = 24;
+// QSSF file header is 26 bytes: magic(4) + version(2) + schema_id(16) + flags(4).
+const QSSF_FILE_HEADER_LEN: usize = 26;
 
 /// Configuration for `analyze_file`.
 pub struct AnalysisConfig {
@@ -119,7 +119,7 @@ fn read_next_frame<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>, Stabstrea
         Err(e) => return Err(StabstreamError::Io(e)),
     }
     let payload_len = u32::from_le_bytes(hdr[24..28].try_into().unwrap()) as usize;
-    let remainder = 2 + payload_len + 6;
+    let remainder = payload_len + 6;
     let mut rest = vec![0u8; remainder];
     reader.read_exact(&mut rest).map_err(StabstreamError::Io)?;
     let mut out = Vec::with_capacity(36 + remainder);
@@ -260,6 +260,21 @@ fn run_analysis<D: Decoder>(
 }
 
 // ---------------------------------------------------------------------------
+// StreamPlayer bridge
+// ---------------------------------------------------------------------------
+
+/// Run analysis on a `StreamPlayer` that is already positioned at the first frame.
+///
+/// This is the implementation backing `StreamPlayer::analyze()`.
+pub(crate) fn analyze_player<R: Read, D: Decoder>(
+    player: &mut crate::player::StreamPlayer<R>,
+    decoder: &D,
+    config: &AnalysisConfig,
+) -> Result<AnalysisReport, StabstreamError> {
+    run_analysis(&mut || player.next_frame_bytes(), decoder, config)
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -308,8 +323,9 @@ pub fn analyze_file<D: Decoder>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stabstream_core::window::SyndromeWindow;
-    use stabstream_decoder::{DecoderResult, NullDecoder};
+    use stabstream_decoder::NullDecoder;
+
+    // ── unit tests ──────────────────────────────────────────────────────────
 
     #[test]
     fn decode_rle_basic() {
@@ -347,5 +363,171 @@ mod tests {
         let c = AnalysisConfig::default();
         assert_eq!(c.window_depth, 5);
         assert_eq!(c.observable_count, 1);
+    }
+
+    // ── integration tests ────────────────────────────────────────────────────
+
+    /// Build a minimal valid QSSF frame byte blob (no file header).
+    fn build_frame(frame_id: u64, round: u32, detector_events: &[bool]) -> Vec<u8> {
+        use stabstream_deserialize::rle::encode_detector_events;
+
+        let ancilla_count = detector_events.len() as u16;
+        let rle = encode_detector_events(detector_events);
+        // payload_len = 2-byte de_len prefix + rle bytes + ancilla_count meas bytes
+        let payload_len = (2 + rle.len() + ancilla_count as usize) as u32;
+
+        let mut hdr = [0u8; 36];
+        hdr[0..8].copy_from_slice(&frame_id.to_le_bytes());
+        hdr[8..12].copy_from_slice(&round.to_le_bytes());
+        // timestamp_ns at [12..20] = 0, qubit_count at [20..22] = 0
+        hdr[22..24].copy_from_slice(&ancilla_count.to_le_bytes());
+        hdr[24..28].copy_from_slice(&payload_len.to_le_bytes());
+        hdr[28] = 0x01; // SurfaceCode
+        let header_crc = crc32fast::hash(&hdr[0..32]);
+        hdr[32..36].copy_from_slice(&header_crc.to_le_bytes());
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&hdr);
+        out.extend_from_slice(&(rle.len() as u16).to_le_bytes());
+        out.extend_from_slice(&rle);
+        for &e in detector_events {
+            out.push(if e { 0xFF } else { 0x01 });
+        }
+        out.extend_from_slice(&0xFFFFu16.to_le_bytes()); // sentinel
+        out.extend_from_slice(&0u32.to_le_bytes()); // frame CRC (not checked by analyze)
+        out
+    }
+
+    #[test]
+    fn analyze_counts_frames_and_shots() {
+        use std::io::Cursor;
+
+        let window_depth = 3;
+        let ancilla_count = 4;
+        let n_frames = 10u64;
+
+        let mut stream = Vec::new();
+        for i in 0..n_frames {
+            stream.extend_from_slice(&build_frame(i, i as u32, &[false; 4]));
+        }
+
+        let dec = NullDecoder;
+        let config = AnalysisConfig {
+            window_depth,
+            observable_count: 1,
+        };
+        let mut cursor = Cursor::new(stream);
+        let report = run_analysis(&mut || read_next_frame(&mut cursor), &dec, &config).unwrap();
+
+        assert_eq!(report.frames_processed, n_frames);
+        // Sliding window: first window fills after window_depth frames, then
+        // fires on every subsequent push → shots = n_frames - window_depth + 1
+        assert_eq!(report.total_shots, n_frames - window_depth as u64 + 1);
+        assert_eq!(report.ancilla_count, ancilla_count);
+    }
+
+    #[test]
+    fn analyze_per_ancilla_fire_frequency() {
+        use std::io::Cursor;
+
+        let n_frames = 20u64;
+        let ancilla_count = 4;
+        // Only ancilla 0 fires in every frame.
+        let events = |i: u64| {
+            let mut e = vec![false; ancilla_count];
+            if i % 2 == 0 {
+                e[0] = true; // ancilla 0 fires every other frame
+            }
+            e
+        };
+
+        let mut stream = Vec::new();
+        for i in 0..n_frames {
+            stream.extend_from_slice(&build_frame(i, i as u32, &events(i)));
+        }
+
+        let dec = NullDecoder;
+        let config = AnalysisConfig {
+            window_depth: 1,
+            observable_count: 1,
+        };
+        let mut cursor = Cursor::new(stream);
+        let report = run_analysis(&mut || read_next_frame(&mut cursor), &dec, &config).unwrap();
+
+        // Ancilla 0 fires in half the frames → frequency ≈ 0.5
+        let freq0 = report.per_ancilla_fire_frequency[0];
+        assert!(
+            (freq0 - 0.5).abs() < 0.05,
+            "ancilla 0 freq={freq0}, expected ~0.5"
+        );
+        // Ancilla 1–3 never fire → frequency = 0
+        for &f in &report.per_ancilla_fire_frequency[1..] {
+            assert_eq!(f, 0.0);
+        }
+    }
+
+    #[test]
+    fn analyze_syndrome_weight_histogram() {
+        use std::io::Cursor;
+
+        let n_frames = 6u64;
+        // 3 frames with weight 0, 3 frames with weight 2
+        let frames_data: Vec<Vec<bool>> = (0..n_frames)
+            .map(|i| {
+                if i < 3 {
+                    vec![false, false, false, false]
+                } else {
+                    vec![true, true, false, false]
+                }
+            })
+            .collect();
+
+        let mut stream = Vec::new();
+        for (i, events) in frames_data.iter().enumerate() {
+            stream.extend_from_slice(&build_frame(i as u64, i as u32, events));
+        }
+
+        let dec = NullDecoder;
+        let config = AnalysisConfig {
+            window_depth: 1,
+            observable_count: 1,
+        };
+        let mut cursor = Cursor::new(stream);
+        let report = run_analysis(&mut || read_next_frame(&mut cursor), &dec, &config).unwrap();
+
+        assert_eq!(report.syndrome_weight_histogram[0], 3); // 3 frames with weight 0
+        assert_eq!(report.syndrome_weight_histogram[2], 3); // 3 frames with weight 2
+    }
+
+    #[test]
+    fn stream_player_analyze_method() {
+        let n_frames = 8u64;
+        let window_depth = 2;
+
+        // Build a raw (uncompressed) frame stream and wrap it in a zstd stream,
+        // since StreamPlayer expects zstd-compressed input.
+        let mut raw = Vec::new();
+        for i in 0..n_frames {
+            raw.extend_from_slice(&build_frame(i, 0, &[false, false, false]));
+        }
+
+        let mut compressed = Vec::new();
+        {
+            let mut enc = zstd::Encoder::new(&mut compressed, 1).unwrap();
+            std::io::Write::write_all(&mut enc, &raw).unwrap();
+            enc.finish().unwrap();
+        }
+
+        let mut player =
+            crate::player::StreamPlayer::new(std::io::Cursor::new(compressed)).unwrap();
+        let config = AnalysisConfig {
+            window_depth,
+            observable_count: 1,
+        };
+        let report = player.analyze(&NullDecoder, config).unwrap();
+
+        assert_eq!(report.frames_processed, n_frames);
+        assert_eq!(report.total_shots, n_frames - window_depth as u64 + 1);
+        assert_eq!(report.ancilla_count, 3);
     }
 }

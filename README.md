@@ -28,13 +28,15 @@ bridge for MWPM decoding via PyMatching.
 | `stabstream-core` | `SyndromeFrame`, `SyndromeWindow`, `CodeType`, stabilizer models, `HardwareSchema` |
 | `stabstream-dem` | Stim DEM parser, `SpacetimeGraph` builder, schema generation from DEM |
 | `stabstream-decoder` | `Decoder` trait, `NullDecoder`, `UnionFindDecoder` (O(n·α(n))) |
-| `stabstream-metrics` | `LogicalErrorAccumulator` (lock-free), `Histogram`, `MetricsReport` |
+| `stabstream-metrics` | `LogicalErrorAccumulator` (lock-free), `Histogram`, `AnalysisReport` |
 | `stabstream-deserialize` | Zero-copy QSSF binary parser and async pipeline |
 | `stabstream-validate` | Parity checks, timing validation, bounds enforcement |
 | `stabstream-convert` | QSSF ↔ Stim conversion, observable ground-truth export |
-| `stabstream-replay` | Compressed stream logging (zstd) and playback |
-| `stabstream-sim` | Stim subprocess wrapper for syndrome generation |
-| `stabstream-py` | PyO3 Python bindings — NumPy arrays, DEM bridge, PyMatching integration |
+| `stabstream-replay` | zstd-compressed stream recording, `StreamPlayer`, `analyze_file` |
+| `stabstream-analyze` | `stabstream-analyze` CLI: offline decode + analysis of QSSF recordings |
+| `stabstream-sim` | QSSF simulator — direct, broadcast, and SHM transport modes |
+| `stabstream-threshold` | `stabstream-threshold run/compare` — threshold sweep and SVG plotting |
+| `stabstream-py` | PyO3 Python bindings — NumPy arrays, DEM bridge, vendor adapters |
 | `stabstream-ffi` | C header generation (cbindgen) |
 | `dashboard` | `ratatui` TUI for live syndrome monitoring |
 | `benches` | Criterion benchmarks for parse throughput and validator overhead |
@@ -47,8 +49,19 @@ bridge for MWPM decoding via PyMatching.
 # Build the workspace
 cargo build --workspace
 
-# Run the live dashboard (connects to a QSSF TCP source)
+# Simulate a syndrome stream (native, no Stim required)
+cargo run -p stabstream-sim -- --simulator native --dem circuit.dem --port 9000
+
+# Connect the live dashboard
 cargo run -p stabstream-dashboard -- --source tcp://localhost:9000
+
+# Offline analysis of a recording
+stabstream-analyze --input recording.qssf --dem circuit.dem --decoder union-find
+
+# Threshold sweep
+stabstream-threshold run --dem circuit.dem --shots 100000 --decoder union-find \
+    --p-physical 0.003 --p-physical 0.005 --p-physical 0.008 --out threshold.json
+stabstream-threshold compare --input threshold.json --plot threshold.svg
 
 # Run benchmarks
 cargo bench -p stabstream-benches
@@ -57,11 +70,95 @@ cargo bench -p stabstream-benches
 ### Python bindings
 
 ```bash
-pip install maturin pymatching numpy
+pip install maturin numpy
 cd crates/stabstream-py && maturin develop
 python python/examples/parse_frames.py recording.qssf
-python python/examples/pymatching_bridge.py model.dem recording.qssf
+python python/examples/vendor_adapters.py   # IBM / Cirq / NumPy adapters (no hardware needed)
 ```
+
+---
+
+## Offline Analysis
+
+`stabstream-analyze` replays a QSSF recording through a decoder and produces a
+JSON report with logical error rates, latency percentiles, per-ancilla fire
+frequencies, and syndrome weight distributions.
+
+```bash
+stabstream-analyze \
+    --input recording.qssf \
+    --dem circuit.dem \
+    --decoder union-find \
+    --window-depth 5 \
+    --output report.json \
+    --verbose
+```
+
+When the recording includes observable ground truth (QSSF tag `0x10`,
+generated with `--with-observables`), `logical_error_rates` is populated.
+Without ground truth, latency and diagnostic fields are still computed.
+
+From Rust, use `StreamPlayer::analyze()` for zstd-compressed recordings:
+
+```rust
+let file = File::open("recording.qssf.zst")?;
+let mut player = StreamPlayer::new(file)?;
+let report = player.analyze(&decoder, AnalysisConfig::default())?;
+println!("{}", report.summary());
+```
+
+See [docs/tutorials/02_offline_analysis.md](docs/tutorials/02_offline_analysis.md)
+for the full field reference and hardware debugging guide.
+
+---
+
+## Transport Modes
+
+`stabstream-sim` supports three transports:
+
+| Mode | Command | IPC latency | Multi-consumer |
+|------|---------|-------------|----------------|
+| `direct` | `--transport direct` | ~2–5 µs | No |
+| `broadcast` | `--transport broadcast` | ~2–5 µs | Yes (TCP fan-out) |
+| `shm` | `--transport shm` | ~50–200 ns | No (SHM ring) |
+
+```bash
+# Broadcast: one source → N TCP clients
+stabstream-sim --simulator native --dem circuit.dem \
+    --transport broadcast --broadcast-capacity 512
+
+# SHM: ultra-low-latency on-host IPC
+stabstream-sim --simulator native --dem circuit.dem \
+    --transport shm --shm-name my_experiment
+```
+
+See [docs/tutorials/04_transport_modes.md](docs/tutorials/04_transport_modes.md)
+for latency trade-offs and decoder integration.
+
+---
+
+## Threshold Benchmarking
+
+```bash
+# Sweep over physical error rates at multiple distances
+stabstream-threshold run \
+    --dem surface_d3.dem --dem surface_d5.dem --dem surface_d7.dem \
+    --p-physical 0.001 --p-physical 0.003 --p-physical 0.005 \
+    --p-physical 0.008 --p-physical 0.012 \
+    --shots 100000 --decoder union-find \
+    --out threshold.json --plot threshold.svg
+
+# Compare two runs (e.g. UF vs null decoder)
+stabstream-threshold compare \
+    --input uf.json --label "Union-Find" \
+    --input null.json --label "Null" \
+    --plot comparison.svg
+```
+
+The `run` subcommand uses `rayon` for parallel shot generation (one
+`(SmallRng, Decoder)` per worker thread) and writes CSV/JSON output. The
+`compare` subcommand estimates the threshold by interpolating the crossing
+between adjacent-distance curves.
 
 ---
 
