@@ -18,7 +18,7 @@ pub mod histogram;
 pub mod report;
 
 pub use histogram::Histogram;
-pub use report::MetricsReport;
+pub use report::{AnalysisReport, MetricsReport};
 
 /// Accumulates logical error statistics across many decoder shots.
 ///

@@ -25,7 +25,7 @@ impl OwnedSyndromeData {
     /// Decode RLE-encoded detector events into a flat bool vector.
     ///
     /// QSSF RLE token: bit 7 = run mode (0 = zeros, 1 = ones), bits 0–6 = run length.
-    fn decode_rle(rle: &[u8], ancilla_count: usize) -> Vec<bool> {
+    pub fn decode_rle(rle: &[u8], ancilla_count: usize) -> Vec<bool> {
         let mut out = Vec::with_capacity(ancilla_count);
         for &token in rle {
             let mode = (token & 0x80) != 0;
