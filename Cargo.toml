@@ -12,6 +12,7 @@ members = [
     "crates/stabstream-sim",
     "crates/stabstream-dem",
     "crates/stabstream-metrics",
+    "crates/stabstream-analyze",
     "dashboard",
     "benches",
 ]

@@ -11,6 +11,8 @@ description  = "Compressed stream logging and playback for stabstream"
 [dependencies]
 stabstream-core        = { path = "../stabstream-core" }
 stabstream-deserialize = { path = "../stabstream-deserialize" }
+stabstream-decoder     = { path = "../stabstream-decoder" }
+stabstream-metrics     = { path = "../stabstream-metrics" }
 tokio.workspace        = true
 zstd.workspace         = true
 thiserror.workspace    = true

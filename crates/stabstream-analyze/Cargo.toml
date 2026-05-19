@@ -1,0 +1,23 @@
+[package]
+name         = "stabstream-analyze"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "CLI tool for offline QEC decoding analysis of QSSF recordings"
+
+[[bin]]
+name = "stabstream-analyze"
+path = "src/main.rs"
+
+[dependencies]
+stabstream-core    = { path = "../stabstream-core" }
+stabstream-dem     = { path = "../stabstream-dem" }
+stabstream-decoder = { path = "../stabstream-decoder" }
+stabstream-metrics = { path = "../stabstream-metrics" }
+stabstream-replay  = { path = "../stabstream-replay" }
+clap.workspace     = true
+serde_json.workspace = true
+anyhow.workspace   = true
