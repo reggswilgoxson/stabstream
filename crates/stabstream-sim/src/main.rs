@@ -5,8 +5,9 @@ use clap::{Parser, ValueEnum};
 use stabstream_dem::DetectorErrorModel;
 use stabstream_sim::{
     broadcast::{relay_to_socket, SimBroadcaster},
+    serve_circuit_to_socket, serve_dem_to_socket,
     shm::ShmProducer,
-    serve_circuit_to_socket, serve_dem_to_socket, NoiseModel, DEFAULT_BROADCAST_CAPACITY,
+    NoiseModel, DEFAULT_BROADCAST_CAPACITY,
 };
 use tokio::net::TcpListener;
 
@@ -283,8 +284,7 @@ async fn run_broadcast_producer(
                 }
                 let ac = *ancilla_count.get_or_insert(trimmed.len() as u16);
                 let events: Vec<bool> = trimmed.bytes().map(|b| b == b'1').collect();
-                let frame_bytes =
-                    crate_encode_shot_frame(&events, 0, frame_id, ac);
+                let frame_bytes = crate_encode_shot_frame(&events, 0, frame_id, ac);
                 broadcaster.send(std::sync::Arc::new(frame_bytes));
                 frame_id += 1;
             }

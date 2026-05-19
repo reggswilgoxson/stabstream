@@ -78,10 +78,7 @@ impl ShmProducer {
     /// when the ring wraps around.
     pub fn write_frame(&mut self, data: &[u8]) -> anyhow::Result<()> {
         if data.len() > MAX_FRAME_SIZE {
-            anyhow::bail!(
-                "frame too large: {} > {MAX_FRAME_SIZE}",
-                data.len()
-            );
+            anyhow::bail!("frame too large: {} > {MAX_FRAME_SIZE}", data.len());
         }
 
         let off = slot_byte_offset(self.next_seq);
@@ -118,10 +115,7 @@ impl ShmConsumer {
     /// Open an existing SHM region created by [`ShmProducer::create`].
     pub fn open(name: &str) -> anyhow::Result<Self> {
         let path = format!("/dev/shm/{name}");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let file = OpenOptions::new().read(true).write(true).open(&path)?;
         let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
             mmap,
@@ -152,9 +146,7 @@ impl ShmConsumer {
         }
 
         let off = slot_byte_offset(self.consumer_seq);
-        let len = u32::from_le_bytes(
-            self.mmap[off..off + 4].try_into().unwrap(),
-        ) as usize;
+        let len = u32::from_le_bytes(self.mmap[off..off + 4].try_into().unwrap()) as usize;
 
         if len > MAX_FRAME_SIZE {
             anyhow::bail!("corrupt slot: len {len} > {MAX_FRAME_SIZE}");
