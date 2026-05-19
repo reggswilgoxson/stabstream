@@ -1,0 +1,27 @@
+[package]
+name         = "stabstream-threshold"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "QEC threshold benchmarking suite — sweep (d, p) parameter space, accumulate p_L, plot threshold crossing"
+
+[[bin]]
+name = "stabstream-threshold"
+path = "src/main.rs"
+
+[dependencies]
+stabstream-core        = { path = "../stabstream-core" }
+stabstream-dem         = { path = "../stabstream-dem" }
+stabstream-decoder     = { path = "../stabstream-decoder" }
+stabstream-metrics     = { path = "../stabstream-metrics" }
+stabstream-sim         = { path = "../stabstream-sim" }
+rayon.workspace        = true
+plotters.workspace     = true
+rand.workspace         = true
+clap.workspace         = true
+anyhow.workspace       = true
+serde.workspace        = true
+serde_json.workspace   = true

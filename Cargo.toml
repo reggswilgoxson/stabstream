@@ -13,6 +13,7 @@ members = [
     "crates/stabstream-dem",
     "crates/stabstream-metrics",
     "crates/stabstream-analyze",
+    "crates/stabstream-threshold",
     "dashboard",
     "benches",
 ]
@@ -58,6 +59,10 @@ crc32fast    = "1"
 clap         = { version = "4", features = ["derive"] }
 # RNG for native noise sampling
 rand         = { version = "0.8", features = ["small_rng"] }
+# parallel iterators for threshold benchmarking
+rayon        = "1"
+# SVG plotting for threshold curves
+plotters     = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "full_palette"] }
 # OpenTelemetry (optional, behind "otel" feature flags)
 opentelemetry       = { version = "0.22", features = ["trace"] }
 opentelemetry_sdk   = { version = "0.22", features = ["trace", "rt-tokio"] }
