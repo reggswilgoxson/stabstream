@@ -10,6 +10,10 @@ license = { text = "Apache-2.0" }
 version = "0.1.0"
 readme = "../../README.md"
 
+[project.scripts]
+stabstream-qiskit-to-qssf = "stabstream.cli.qiskit_to_qssf:main"
+stabstream-cirq-to-qssf = "stabstream.cli.cirq_to_qssf:main"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "stabstream._stabstream"
