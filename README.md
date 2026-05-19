@@ -4,27 +4,42 @@
   <img src="https://img.shields.io/badge/Language-Rust-orange?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Platform-Cross--platform-blue?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Status-Active-success?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/License-MIT%2FApache--2.0-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Performance-1.5M%2B%20frames%2Fs-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Safety-Memory%20Safe%20Rust-yellow?style=for-the-badge" />
   <img src="https://img.shields.io/badge/QEC-Ready-red?style=for-the-badge" />
 </p>
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
-stream deserializer and analysis runtime written in Rust, with C FFI and Python
-bindings.
+stream deserializer and real-time decoding runtime written in Rust, with Python
+bindings (PyO3 + NumPy) and C FFI.
+
+stabstream parses QSSF frames at ~600 ns each, runs a native Union-Find decoder
+in O(n·α(n)) time, and accumulates logical error rates — all without leaving Rust.
+The Python bindings expose zero-copy NumPy arrays and a `DetectorErrorModel.to_pymatching()`
+bridge for MWPM decoding via PyMatching.
+
+---
 
 ## Workspace Crates
 
 | Crate | Description |
 |-------|-------------|
-| `stabstream-core` | `SyndromeFrame` types, `CodeType` enum, stabilizer models |
+| `stabstream-core` | `SyndromeFrame`, `SyndromeWindow`, `CodeType`, stabilizer models, `HardwareSchema` |
+| `stabstream-dem` | Stim DEM parser, `SpacetimeGraph` builder, schema generation from DEM |
+| `stabstream-decoder` | `Decoder` trait, `NullDecoder`, `UnionFindDecoder` (O(n·α(n))) |
+| `stabstream-metrics` | `LogicalErrorAccumulator` (lock-free), `Histogram`, `MetricsReport` |
 | `stabstream-deserialize` | Zero-copy QSSF binary parser and async pipeline |
 | `stabstream-validate` | Parity checks, timing validation, bounds enforcement |
+| `stabstream-convert` | QSSF ↔ Stim conversion, observable ground-truth export |
 | `stabstream-replay` | Compressed stream logging (zstd) and playback |
-| `stabstream-ffi` | C header generation (cbindgen) and Python bindings (PyO3) |
+| `stabstream-sim` | Stim subprocess wrapper for syndrome generation |
+| `stabstream-py` | PyO3 Python bindings — NumPy arrays, DEM bridge, PyMatching integration |
+| `stabstream-ffi` | C header generation (cbindgen) |
 | `dashboard` | `ratatui` TUI for live syndrome monitoring |
 | `benches` | Criterion benchmarks for parse throughput and validator overhead |
+
+---
 
 ## Quick Start
 
@@ -39,7 +54,239 @@ cargo run -p stabstream-dashboard -- --source tcp://localhost:9000
 cargo bench -p stabstream-benches
 ```
 
-## Findings
+### Python bindings
+
+```bash
+pip install maturin pymatching numpy
+cd crates/stabstream-py && maturin develop
+python python/examples/parse_frames.py recording.qssf
+python python/examples/pymatching_bridge.py model.dem recording.qssf
+```
+
+---
+
+## Decoding Pipeline
+
+```
+QSSF stream (file or TCP)
+        │
+        ▼
+  StabstreamStream        ← PyO3: stabstream.StabstreamStream
+  (zero-copy parse,
+   ~600 ns/frame)
+        │
+        ▼
+  SyndromeWindow          ← PyO3: stabstream.SyndromeWindow
+  (sliding VecDeque,      ← .to_numpy_matrix() → shape (rounds, ancillas)
+   rounds × ancillas)
+        │
+        ├──► UnionFindDecoder     Rust, O(n·α(n)), allocation-free hot path
+        │    (stabstream-decoder)
+        │
+        └──► PyMatching (MWPM)   Python bridge via DetectorErrorModel.to_pymatching()
+             (optimal p_L, slower)
+        │
+        ▼
+  LogicalErrorAccumulator ← PyO3: stabstream.LogicalErrorAccumulator
+  (AtomicU64, lock-free)
+  → p_L per observable, mean p_L
+```
+
+---
+
+## Native Union-Find Decoder
+
+`UnionFindDecoder` implements the Delfosse & Nickerson 2021 linear-time algorithm.
+It is the only decoder with a credible real-time path within a 1–4 µs
+superconducting qubit syndrome cycle.
+
+```rust
+use std::sync::Arc;
+use stabstream_core::window::SyndromeWindow;
+use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
+use stabstream_decoder::{Decoder, UnionFindDecoder};
+use stabstream_metrics::LogicalErrorAccumulator;
+
+let dem = DetectorErrorModel::parse(dem_text)?;
+let graph = Arc::new(SpacetimeGraph::from_dem(&dem));
+let decoder = UnionFindDecoder::new(Arc::clone(&graph));
+let acc = LogicalErrorAccumulator::new(dem.observable_count);
+
+// Decode loop (allocation-free hot path after construction)
+for window in syndrome_windows {
+    let result = decoder.decode_window(&window);
+    acc.record(&result, ground_truth_bitmask);
+}
+
+println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
+```
+
+**Performance budget for d=5 surface code (24 ancillas, 1.1 µs cycle):**
+
+| Stage | Budget | Status |
+|-------|--------|--------|
+| Frame deserialization | 200 ns | Achieved (~600 ns total) |
+| CRC validation | 70 ns | Achieved |
+| Window slide | 20 ns | Implemented |
+| UF decode | 400 ns | Implemented |
+| **Total** | **~740 ns** | **< 1 µs deadline** |
+
+---
+
+## Stim DEM Parser
+
+Parse any Stim `.dem` file and build a weighted `SpacetimeGraph` for MWPM/UF decoders:
+
+```rust
+use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
+
+let dem = DetectorErrorModel::parse(dem_text)?;
+// detector_count, observable_count, errors, detectors with (x,y,t) coords
+let graph = SpacetimeGraph::from_dem(&dem);
+// nodes: detectors + virtual boundary; edges: weight = -ln(p/(1-p))
+let schema_json = stabstream_dem::schema_gen::schema_from_dem(&dem, "my_code");
+```
+
+Supports: `error(p) D<i> D<j> ^ L<k>`, `detector(x,y,t) D<i>`,
+`logical_observable L<k>`, and `repeat N { ... }` blocks.
+
+---
+
+## Python Bindings
+
+Build with `maturin develop` from `crates/stabstream-py/`.
+
+### SyndromeFrame — NumPy arrays
+
+```python
+from stabstream import StabstreamStream
+
+with StabstreamStream("recording.qssf") as stream:
+    for frame in stream:
+        # Zero-copy views into Rust-owned memory
+        det_events = frame.to_numpy_detector_events()  # shape (ancilla_count,), dtype bool
+        meas       = frame.to_numpy_meas_results()     # shape (ancilla_count,), dtype int8
+        print(frame.observable_flips)  # Optional[int] — ground truth tag 0x10
+```
+
+### SyndromeWindow — multi-round detector matrix
+
+```python
+from stabstream import SyndromeWindow
+
+window = SyndromeWindow(ancilla_count=24, window_depth=5)
+for frame in stream:
+    window.push(frame)
+    if window.is_full():
+        mat = window.to_numpy_matrix()   # shape (5, 24), dtype bool
+        active = window.active_detectors()  # flat indices of fired detectors
+```
+
+### DetectorErrorModel — PyMatching bridge
+
+```python
+from stabstream import DetectorErrorModel
+
+dem = DetectorErrorModel.from_file("model.dem")
+# dem.detector_count, dem.observable_count, dem.error_count
+
+# Build a pymatching.Matching with -ln(p/(1-p)) edge weights (requires pip install pymatching)
+matching = dem.to_pymatching()
+prediction = matching.decode(detector_events.astype(np.uint8))
+
+# Auto-generate a HardwareSchema JSON from the DEM
+schema_json = dem.to_schema_json("my_surface_code")
+```
+
+### LogicalErrorAccumulator
+
+```python
+from stabstream import LogicalErrorAccumulator
+
+acc = LogicalErrorAccumulator(observable_count=1)
+acc.record(decoder_result, ground_truth=frame.observable_flips or 0)
+print(f"p_L = {acc.logical_error_rate(0):.4e}")
+print(f"mean p_L = {acc.mean_logical_error_rate():.4e}")
+```
+
+### CodeType — all supported codes
+
+```python
+from stabstream import CodeType
+
+CodeType.SURFACE_CODE       # 0x01
+CodeType.HONEYCOMB_CODE     # 0x02
+CodeType.COLOR_CODE         # 0x03
+CodeType.REPETITION_CODE    # 0x04
+CodeType.TORIC_CODE         # 0x05
+CodeType.BIVARIATE_BICYCLE  # 0x06  IBM BB/Gross codes
+CodeType.HYPERGRAPH_PRODUCT # 0x07  general qLDPC
+CodeType.FIBER_BUNDLE       # 0x08  high-rate codes
+CodeType.CUSTOM             # 0xFF
+```
+
+---
+
+## Logical Error Rate Accumulation
+
+`LogicalErrorAccumulator` uses `AtomicU64` counters — safe for multi-threaded
+threshold simulation without a `Mutex`:
+
+```rust
+use stabstream_metrics::LogicalErrorAccumulator;
+
+let acc = LogicalErrorAccumulator::new(observable_count);
+
+// Record shots concurrently from multiple threads
+acc.record(&decoder_result, ground_truth_bitmask);
+
+let report = acc.report();
+// MetricsReport { total_shots, logical_error_rates, mean_logical_error_rate }
+println!("{}", report.summary());
+```
+
+The `Histogram` type provides power-of-2 bucket histograms for decode latency
+and syndrome weight distributions.
+
+---
+
+## Observable Ground Truth (tag 0x10)
+
+QSSF frames can carry the simulator's true observable flip bitmask in metadata
+tag `0x10`. This enables offline threshold analysis from replay files:
+
+```bash
+# Generate QSSF with observable ground truth from Stim
+stabstream-convert stim-to-qssf \
+    --circuit circuit.stim --shots 100000 \
+    --with-observables --out training_data.qssf
+
+# In Python: frame.observable_flips contains the u64 bitmask
+```
+
+---
+
+## qLDPC Code Support
+
+`HardwareSchema` supports IBM Bivariate Bicycle (BB/Gross) codes and other
+qLDPC families with optional fields:
+
+```json
+{
+  "ldpc_hz_matrix": "<base64 CSR>",
+  "ldpc_hx_matrix": "<base64 CSR>",
+  "logical_z_matrix": "<base64>",
+  "logical_x_matrix": "<base64>",
+  "encoding_rate": 0.0833,
+  "dem_path": "models/bb_144_12_12.dem"
+}
+```
+
+All fields are optional — existing schema files remain valid.
+
+---
+
+## Benchmarks
 
 Benchmark results on Linux x86-64, release build, Criterion 100-sample runs,
 against a synthetic surface-code d=5 stream (`synthetic_surface_d5_stream`):
@@ -66,12 +313,14 @@ below this ceiling, so stabstream is not a bottleneck in the QEC pipeline.
 
 An earlier run on Windows 10 reported ~14 µs / 70K fps for the same benchmarks.
 The root cause was the benchmark loop creating a fresh `QssfStream` per
-iteration, which allocated (and freed) a 4 MiB `RingBuffer` each time.  On
+iteration, which allocated (and freed) a 4 MiB `RingBuffer` each time. On
 Linux, glibc uses `mmap`/`munmap` for allocations above 128 KB, making each
-4 MiB alloc ~170 µs.  The benchmarks now pass `ring_buf_bytes: 4096` (the
+4 MiB alloc ~170 µs. The benchmarks now pass `ring_buf_bytes: 4096` (the
 single-frame payload is ~135 bytes), eliminating the allocation noise and
-surfacing the true parse cost.  The RLE popcount benchmark, which has no
+surfacing the true parse cost. The RLE popcount benchmark, which has no
 allocation, was unaffected and produced consistent results across both runs.
+
+---
 
 ## Format
 
