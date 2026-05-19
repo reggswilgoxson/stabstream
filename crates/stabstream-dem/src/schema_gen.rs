@@ -1,13 +1,59 @@
-//! Generate `HardwareSchema` JSON from a parsed `DetectorErrorModel`.
-//!
-//! Detectors with coordinates [x, y, t] are mapped to stabilizer entries.
-//! This provides a path from DEM → schema JSON without manually authoring
-//! schema files for each hardware topology.
+//! Generate `HardwareSchema` JSON from a `DetectorErrorModel` or BB parameters.
 
 use stabstream_core::schema::{HardwareSchema, StabilizerEntry, StabilizerKind};
 use uuid::Uuid;
 
+use crate::ldpc::{encode_csr_base64, BbParams};
 use crate::parser::DetectorErrorModel;
+
+/// Generate a `HardwareSchema` from BB polynomial parameters.
+///
+/// Builds Hz and Hx check matrices, encodes them as base64 CSR, and populates
+/// all stabilizer entries from the matrix rows.
+pub fn schema_from_bb(params: &BbParams, name: &str) -> HardwareSchema {
+    let (hz_rows, hx_rows) = params.build_check_rows();
+    let n = params.n();
+    let n_anc = params.l * params.m;
+
+    let mut stabilizers: Vec<StabilizerEntry> = Vec::with_capacity(2 * n_anc);
+    for (id, row) in hz_rows.iter().enumerate() {
+        stabilizers.push(StabilizerEntry {
+            id: id as u16,
+            kind: StabilizerKind::Z,
+            qubits: row.clone(),
+        });
+    }
+    for (id, row) in hx_rows.iter().enumerate() {
+        stabilizers.push(StabilizerEntry {
+            id: (n_anc + id) as u16,
+            kind: StabilizerKind::X,
+            qubits: row.clone(),
+        });
+    }
+
+    HardwareSchema {
+        schema_id: Uuid::new_v4(),
+        version: "1.0.0".to_string(),
+        name: name.to_string(),
+        description: format!(
+            "Bivariate Bicycle [[{},{},{}]] code (l={}, m={})",
+            n, params.logical_qubits, params.distance, params.l, params.m
+        ),
+        code_type: "bivariate_bicycle".to_string(),
+        distance: params.distance,
+        qubit_count: n as u16,
+        ancilla_count: params.ancilla_count() as u16,
+        stabilizers,
+        measurement_cycle_us: 1.1,
+        ancilla_layout: "bivariate_bicycle".to_string(),
+        ldpc_hz_matrix: Some(encode_csr_base64(&hz_rows, n)),
+        ldpc_hx_matrix: Some(encode_csr_base64(&hx_rows, n)),
+        logical_z_matrix: None,
+        logical_x_matrix: None,
+        encoding_rate: Some(params.encoding_rate()),
+        dem_path: None,
+    }
+}
 
 /// Generate a `HardwareSchema` from a `DetectorErrorModel`.
 ///

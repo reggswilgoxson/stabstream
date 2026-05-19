@@ -7,11 +7,14 @@
 //! consume.
 
 pub mod graph;
+pub mod ldpc;
 pub mod parser;
 pub mod schema_gen;
 
 pub use graph::{SpacetimeEdge, SpacetimeGraph, SpacetimeNode};
+pub use ldpc::BbParams;
 pub use parser::{DemDetector, DemError, DetectorErrorModel, ParseError};
+pub use schema_gen::{schema_from_bb, schema_from_dem};
 
 #[cfg(test)]
 mod tests {
