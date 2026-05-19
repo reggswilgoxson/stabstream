@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::{PyIOError, PyImportError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PySet};
@@ -332,6 +332,25 @@ impl PySyndromeFrame {
         PyDecoderResult::from_rust(DecoderResult::empty())
     }
 
+    /// Serialise this frame as a Python dict suitable for pandas / JSON.
+    ///
+    /// The `detector_events` key holds a 1-D NumPy bool array. All scalar
+    /// fields are plain Python ints/floats.
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let d = pyo3::types::PyDict::new_bound(py);
+        d.set_item("frame_id", self.frame_id)?;
+        d.set_item("round", self.round)?;
+        d.set_item("timestamp_ns", self.timestamp_ns)?;
+        d.set_item("qubit_count", self.qubit_count)?;
+        d.set_item("ancilla_count", self.ancilla_count)?;
+        d.set_item("detector_event_count", self.detector_event_count)?;
+        d.set_item("code_type", self.code_type)?;
+        d.set_item("distance", self.distance)?;
+        d.set_item("detector_events", self.to_numpy_detector_events(py))?;
+        d.set_item("observable_flips", self.observable_flips)?;
+        Ok(d)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SyndromeFrame(frame_id={}, round={}, detector_events={}/{})",
@@ -405,6 +424,35 @@ impl PySyndromeWindow {
         let arr = Array2::from_shape_vec((rounds, ancillas), flat)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(arr.into_pyarray_bound(py))
+    }
+
+    /// Push detector events directly from a 1-D NumPy bool array.
+    ///
+    /// Use this when building frames from vendor adapters (IBM, Cirq, etc.)
+    /// instead of constructing a full `SyndromeFrame`.
+    ///
+    /// Parameters
+    /// ----------
+    /// detector_events : np.ndarray[bool]
+    ///     Shape ``(ancilla_count,)``.
+    /// frame_id : int, optional
+    ///     Monotonic frame counter (default 0).
+    /// round : int, optional
+    ///     Round index within an experiment (default 0).
+    fn push_numpy(
+        &mut self,
+        detector_events: PyReadonlyArray1<'_, bool>,
+        frame_id: u64,
+        round: u32,
+    ) {
+        let events = detector_events.as_slice().unwrap_or(&[]).to_vec();
+        self.inner.push_owned(OwnedSyndromeData {
+            frame_id,
+            round,
+            timestamp_ns: 0,
+            detector_events: events,
+            meas_results: vec![],
+        });
     }
 
     /// Indices (into the flat detector matrix) of all fired detectors across all rounds.
@@ -728,7 +776,8 @@ impl PySpacetimeGraph {
 // ---------------------------------------------------------------------------
 
 #[pymodule]
-fn stabstream(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_stabstream")]
+fn stabstream_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySyndromeFrame>()?;
     m.add_class::<PySyndromeWindow>()?;
     m.add_class::<PyStabstreamStream>()?;

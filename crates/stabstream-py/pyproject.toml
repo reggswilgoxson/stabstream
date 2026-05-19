@@ -12,4 +12,5 @@ readme = "../../README.md"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "stabstream"
+module-name = "stabstream._stabstream"
+python-source = "python"
