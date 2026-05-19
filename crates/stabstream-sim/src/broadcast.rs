@@ -50,10 +50,7 @@ impl SimBroadcaster {
 
     /// Broadcast one frame. Returns the receiver count (0 if no subscribers).
     pub fn send(&self, frame: Arc<Vec<u8>>) -> usize {
-        match self.tx.send(frame) {
-            Ok(n) => n,
-            Err(_) => 0,
-        }
+        self.tx.send(frame).unwrap_or_default()
     }
 
     /// Clone the sender so a `spawn_blocking` producer task can push frames.
