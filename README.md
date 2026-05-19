@@ -191,7 +191,18 @@ QSSF stream (file or TCP)
 
 ---
 
-## Native Union-Find Decoder
+## Decoders
+
+Two Rust decoders ship out of the box. Python adapters for PyMatching, Chromobius, and
+Tesseract are in `stabstream.decoders` (see
+[Tutorial 5](docs/tutorials/05_decoder_plugins.md)).
+
+| Decoder | Feature flag | Algorithm | Latency (d=5) | p_L quality |
+|---------|-------------|-----------|---------------|-------------|
+| `UnionFindDecoder` | *(default)* | Union-Find O(n·α(n)) | < 400 ns | Near-optimal |
+| `FusionBlossomDecoder` | `mwpm` | Fusion Blossom MWPM | ~4 µs | Optimal |
+
+### Native Union-Find Decoder
 
 `UnionFindDecoder` implements the Delfosse & Nickerson 2021 linear-time algorithm.
 It is the only decoder with a credible real-time path within a 1–4 µs
@@ -227,6 +238,19 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 | Window slide | 20 ns | Implemented |
 | UF decode | 400 ns | Implemented |
 | **Total** | **~740 ns** | **< 1 µs deadline** |
+
+### Fusion Blossom MWPM Decoder (optional feature)
+
+`FusionBlossomDecoder` achieves MWPM-optimal logical error rates using the
+Fusion Blossom algorithm (Higgott & Gidney 2023). Enable with
+`features = ["mwpm"]`:
+
+```rust
+use stabstream_decoder::mwpm::FusionBlossomDecoder;
+
+let decoder = FusionBlossomDecoder::new(Arc::clone(&graph));
+let result = decoder.decode_window(&window);
+```
 
 ---
 

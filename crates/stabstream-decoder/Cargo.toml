@@ -12,3 +12,11 @@ description  = "Decoder trait and reference implementations for stabstream QEC p
 stabstream-core = { path = "../stabstream-core" }
 stabstream-dem  = { path = "../stabstream-dem" }
 thiserror.workspace = true
+
+[dependencies.fusion-blossom]
+version = "0.2"
+optional = true
+default-features = false
+
+[features]
+mwpm = ["dep:fusion-blossom"]
