@@ -14,11 +14,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use stabstream_decoder::DecoderResult;
 
-pub mod report;
 pub mod histogram;
+pub mod report;
 
-pub use report::MetricsReport;
 pub use histogram::Histogram;
+pub use report::MetricsReport;
 
 /// Accumulates logical error statistics across many decoder shots.
 ///

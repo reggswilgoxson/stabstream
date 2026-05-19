@@ -269,11 +269,8 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             annotations: None,
         };
 
-        let _validate_span = tracing::info_span!(
-            "qssf.frame_validate",
-            frame_id = frame.header.frame_id,
-        )
-        .entered();
+        let _validate_span =
+            tracing::info_span!("qssf.frame_validate", frame_id = frame.header.frame_id,).entered();
 
         match self.config.validation {
             ValidationPolicy::StrictParity => {

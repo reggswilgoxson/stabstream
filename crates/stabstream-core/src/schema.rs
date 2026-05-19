@@ -36,7 +36,6 @@ pub struct HardwareSchema {
     pub ancilla_layout: String,
 
     // ---- qLDPC extensions (optional, absent for stabilizer codes) ----
-
     /// Base64-encoded CSR sparse Hz check matrix (Z stabilizers × data qubits).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ldpc_hz_matrix: Option<String>,

@@ -11,7 +11,7 @@ pub mod parser;
 pub mod schema_gen;
 
 pub use graph::{SpacetimeEdge, SpacetimeGraph, SpacetimeNode};
-pub use parser::{DetectorErrorModel, DemDetector, DemError, ParseError};
+pub use parser::{DemDetector, DemError, DetectorErrorModel, ParseError};
 
 #[cfg(test)]
 mod tests {

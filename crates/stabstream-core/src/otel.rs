@@ -15,8 +15,8 @@ pub fn install(endpoint: &str) -> Result<(), Box<dyn std::error::Error + Send + 
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let resolved_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| endpoint.to_string());
+    let resolved_endpoint =
+        std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_else(|_| endpoint.to_string());
 
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
@@ -25,21 +25,17 @@ pub fn install(endpoint: &str) -> Result<(), Box<dyn std::error::Error + Send + 
                 .tonic()
                 .with_endpoint(resolved_endpoint),
         )
-        .with_trace_config(
-            opentelemetry_sdk::trace::config().with_resource(
-                opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
-                    "service.name",
-                    "stabstream",
-                )]),
-            ),
-        )
+        .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
+            opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+                "service.name",
+                "stabstream",
+            )]),
+        ))
         .install_batch(Tokio)?;
 
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    tracing_subscriber::registry()
-        .with(otel_layer)
-        .try_init()?;
+    tracing_subscriber::registry().with(otel_layer).try_init()?;
 
     Ok(())
 }

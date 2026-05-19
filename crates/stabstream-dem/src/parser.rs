@@ -257,10 +257,7 @@ fn parse_detector_line(line: &str) -> Result<DemDetector, ParseError> {
     // Find the D<id> token in the remainder
     let id = rest
         .split_whitespace()
-        .find_map(|tok| {
-            tok.strip_prefix('D')
-                .and_then(|n| n.parse::<u32>().ok())
-        })
+        .find_map(|tok| tok.strip_prefix('D').and_then(|n| n.parse::<u32>().ok()))
         .ok_or_else(|| ParseError::MalformedTarget(line.to_string()))?;
 
     Ok(DemDetector { id, coords })

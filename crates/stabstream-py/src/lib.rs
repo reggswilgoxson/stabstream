@@ -22,17 +22,41 @@ pub struct PyCodeType {
 #[pymethods]
 impl PyCodeType {
     #[classattr]
-    fn SURFACE_CODE() -> Self { Self { inner: CodeType::SurfaceCode } }
+    fn SURFACE_CODE() -> Self {
+        Self {
+            inner: CodeType::SurfaceCode,
+        }
+    }
     #[classattr]
-    fn HONEYCOMB_CODE() -> Self { Self { inner: CodeType::HoneycombCode } }
+    fn HONEYCOMB_CODE() -> Self {
+        Self {
+            inner: CodeType::HoneycombCode,
+        }
+    }
     #[classattr]
-    fn COLOR_CODE() -> Self { Self { inner: CodeType::ColorCode } }
+    fn COLOR_CODE() -> Self {
+        Self {
+            inner: CodeType::ColorCode,
+        }
+    }
     #[classattr]
-    fn REPETITION_CODE() -> Self { Self { inner: CodeType::RepetitionCode } }
+    fn REPETITION_CODE() -> Self {
+        Self {
+            inner: CodeType::RepetitionCode,
+        }
+    }
     #[classattr]
-    fn TORIC_CODE() -> Self { Self { inner: CodeType::ToricCode } }
+    fn TORIC_CODE() -> Self {
+        Self {
+            inner: CodeType::ToricCode,
+        }
+    }
     #[classattr]
-    fn CUSTOM() -> Self { Self { inner: CodeType::Custom } }
+    fn CUSTOM() -> Self {
+        Self {
+            inner: CodeType::Custom,
+        }
+    }
 
     fn __repr__(&self) -> String {
         format!("CodeType.{:?}", self.inner)
@@ -55,7 +79,10 @@ pub struct PyLogicalCorrection {
 #[pymethods]
 impl PyLogicalCorrection {
     fn __repr__(&self) -> String {
-        format!("LogicalCorrection(logical_id={}, pauli={})", self.logical_id, self.pauli)
+        format!(
+            "LogicalCorrection(logical_id={}, pauli={})",
+            self.logical_id, self.pauli
+        )
     }
 }
 
@@ -68,7 +95,10 @@ impl PyLogicalCorrection {
             PauliOp::Z => "Z",
         }
         .to_string();
-        Self { logical_id: lc.logical_id, pauli }
+        Self {
+            logical_id: lc.logical_id,
+            pauli,
+        }
     }
 }
 
@@ -94,7 +124,11 @@ impl PyDecoderResult {
 impl PyDecoderResult {
     fn from_rust(r: DecoderResult) -> Self {
         Self {
-            corrections: r.corrections.iter().map(PyLogicalCorrection::from_rust).collect(),
+            corrections: r
+                .corrections
+                .iter()
+                .map(PyLogicalCorrection::from_rust)
+                .collect(),
             confidence: r.confidence,
         }
     }
@@ -135,14 +169,38 @@ pub struct PySyndromeFrame {
 
 #[pymethods]
 impl PySyndromeFrame {
-    #[getter] fn frame_id(&self) -> u64 { self.frame_id }
-    #[getter] fn round(&self) -> u32 { self.round }
-    #[getter] fn timestamp_ns(&self) -> u64 { self.timestamp_ns }
-    #[getter] fn qubit_count(&self) -> u16 { self.qubit_count }
-    #[getter] fn ancilla_count(&self) -> u16 { self.ancilla_count }
-    #[getter] fn detector_event_count(&self) -> u32 { self.detector_event_count }
-    #[getter] fn code_type(&self) -> u8 { self.code_type }
-    #[getter] fn distance(&self) -> u8 { self.distance }
+    #[getter]
+    fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+    #[getter]
+    fn round(&self) -> u32 {
+        self.round
+    }
+    #[getter]
+    fn timestamp_ns(&self) -> u64 {
+        self.timestamp_ns
+    }
+    #[getter]
+    fn qubit_count(&self) -> u16 {
+        self.qubit_count
+    }
+    #[getter]
+    fn ancilla_count(&self) -> u16 {
+        self.ancilla_count
+    }
+    #[getter]
+    fn detector_event_count(&self) -> u32 {
+        self.detector_event_count
+    }
+    #[getter]
+    fn code_type(&self) -> u8 {
+        self.code_type
+    }
+    #[getter]
+    fn distance(&self) -> u8 {
+        self.distance
+    }
 
     fn meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new_bound(py, &self.meas_results_raw)
@@ -236,10 +294,7 @@ pub struct PyStabstreamStream {
     source: Option<Box<dyn FrameSource>>,
 }
 
-fn open_source(
-    source_str: &str,
-    rt: &Runtime,
-) -> Result<Box<dyn FrameSource>, StabstreamError> {
+fn open_source(source_str: &str, rt: &Runtime) -> Result<Box<dyn FrameSource>, StabstreamError> {
     let config = StreamConfig {
         validation: ValidationPolicy::Disabled,
         ..Default::default()
@@ -272,7 +327,9 @@ impl PyStabstreamStream {
         })
     }
 
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PySyndromeFrame>> {
         if slf.runtime.is_none() || slf.source.is_none() {
@@ -307,7 +364,9 @@ impl PyStabstreamStream {
         slf.runtime.take();
     }
 
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
     fn __exit__(&mut self, _exc_type: PyObject, _exc_val: PyObject, _tb: PyObject) -> bool {
         self.source.take();
         self.runtime.take();

@@ -113,10 +113,7 @@ impl UnionFindDecoder {
         Self {
             graph,
             uf: std::cell::UnsafeCell::new(Uf::new(n)),
-            clusters: std::cell::UnsafeCell::new(vec![
-                ClusterState { syndrome_count: 0 };
-                n
-            ]),
+            clusters: std::cell::UnsafeCell::new(vec![ClusterState { syndrome_count: 0 }; n]),
         }
     }
 

@@ -61,8 +61,7 @@ impl<W: Write> QssfExporter<W> {
 
         // detector_events: 2-byte LE length + RLE bytes
         let de = frame.payload.detector_events;
-        self.writer
-            .write_all(&(de.len() as u16).to_le_bytes())?;
+        self.writer.write_all(&(de.len() as u16).to_le_bytes())?;
         self.writer.write_all(de)?;
 
         // meas_results: reinterpret i8 as u8
@@ -179,10 +178,7 @@ impl<R: BufRead> StimImporter<R> {
 
         let ancilla_count = *self.ancilla_count.get_or_insert(events.len() as u16);
         let de_rle = encode_detector_events(&events);
-        let meas: Vec<i8> = events
-            .iter()
-            .map(|&e| if e { -1i8 } else { 1i8 })
-            .collect();
+        let meas: Vec<i8> = events.iter().map(|&e| if e { -1i8 } else { 1i8 }).collect();
 
         let frame = OwnedFrame {
             frame_id: self.frame_id,
@@ -283,9 +279,8 @@ pub fn export_owned_frame<W: Write>(
             frame.meas_results.len(),
         )
     };
-    let meas_i8: &[i8] = unsafe {
-        std::slice::from_raw_parts(meas_u8.as_ptr().cast::<i8>(), meas_u8.len())
-    };
+    let meas_i8: &[i8] =
+        unsafe { std::slice::from_raw_parts(meas_u8.as_ptr().cast::<i8>(), meas_u8.len()) };
     use stabstream_core::frame::FrameMetadata;
     let metadata = if frame.observable_flips.is_some() {
         Some(FrameMetadata {
