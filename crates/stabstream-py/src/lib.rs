@@ -1,9 +1,19 @@
-use pyo3::exceptions::PyIOError;
+use std::sync::Arc;
+
+use ndarray::Array2;
+use numpy::{IntoPyArray, PyArray1, PyArray2};
+use pyo3::exceptions::{PyIOError, PyImportError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
-use stabstream_core::{code::CodeType, error::StabstreamError};
+use pyo3::types::{PyBytes, PySet};
+use stabstream_core::{
+    code::CodeType,
+    error::StabstreamError,
+    window::{OwnedSyndromeData, SyndromeWindow},
+};
 use stabstream_decoder::{DecoderResult, LogicalCorrection, PauliOp};
+use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
 use stabstream_deserialize::stream::{QssfStream, StreamConfig};
+use stabstream_metrics::LogicalErrorAccumulator;
 use stabstream_validate::policy::ValidationPolicy;
 use tokio::io::BufReader;
 use tokio::runtime::Runtime;
@@ -52,6 +62,24 @@ impl PyCodeType {
         }
     }
     #[classattr]
+    fn BIVARIATE_BICYCLE() -> Self {
+        Self {
+            inner: CodeType::BivariateBicycle,
+        }
+    }
+    #[classattr]
+    fn HYPERGRAPH_PRODUCT() -> Self {
+        Self {
+            inner: CodeType::HypergraphProduct,
+        }
+    }
+    #[classattr]
+    fn FIBER_BUNDLE() -> Self {
+        Self {
+            inner: CodeType::FiberBundle,
+        }
+    }
+    #[classattr]
     fn CUSTOM() -> Self {
         Self {
             inner: CodeType::Custom,
@@ -64,7 +92,7 @@ impl PyCodeType {
 }
 
 // ---------------------------------------------------------------------------
-// PyDecoderResult
+// PyLogicalCorrection / PyDecoderResult
 // ---------------------------------------------------------------------------
 
 #[pyclass(name = "LogicalCorrection")]
@@ -108,21 +136,25 @@ pub struct PyDecoderResult {
     pub corrections: Vec<PyLogicalCorrection>,
     #[pyo3(get)]
     pub confidence: f64,
+    #[pyo3(get)]
+    pub observable_flips: u64,
 }
 
 #[pymethods]
 impl PyDecoderResult {
     fn __repr__(&self) -> String {
         format!(
-            "DecoderResult(corrections={}, confidence={:.4})",
+            "DecoderResult(corrections={}, confidence={:.4}, observable_flips={:#b})",
             self.corrections.len(),
-            self.confidence
+            self.confidence,
+            self.observable_flips,
         )
     }
 }
 
 impl PyDecoderResult {
     fn from_rust(r: DecoderResult) -> Self {
+        let obs = r.observable_flips;
         Self {
             corrections: r
                 .corrections
@@ -130,7 +162,60 @@ impl PyDecoderResult {
                 .map(PyLogicalCorrection::from_rust)
                 .collect(),
             confidence: r.confidence,
+            observable_flips: obs,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyLogicalErrorAccumulator
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "LogicalErrorAccumulator")]
+pub struct PyLogicalErrorAccumulator {
+    inner: LogicalErrorAccumulator,
+}
+
+#[pymethods]
+impl PyLogicalErrorAccumulator {
+    #[new]
+    fn new(observable_count: usize) -> Self {
+        Self {
+            inner: LogicalErrorAccumulator::new(observable_count),
+        }
+    }
+
+    fn record(&self, result: &PyDecoderResult, ground_truth: u64) {
+        let rust_result = DecoderResult {
+            corrections: Vec::new(),
+            confidence: result.confidence,
+            observable_flips: result.observable_flips,
+        };
+        self.inner.record(&rust_result, ground_truth);
+    }
+
+    fn logical_error_rate(&self, observable: usize) -> f64 {
+        self.inner.logical_error_rate(observable)
+    }
+
+    fn mean_logical_error_rate(&self) -> f64 {
+        self.inner.mean_logical_error_rate()
+    }
+
+    fn total_shots(&self) -> u64 {
+        self.inner.total_shots()
+    }
+
+    fn reset(&self) {
+        self.inner.reset();
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "LogicalErrorAccumulator(shots={}, mean_p_L={:.4e})",
+            self.inner.total_shots(),
+            self.inner.mean_logical_error_rate(),
+        )
     }
 }
 
@@ -148,6 +233,25 @@ struct OwnedFrame {
     code_type: u8,
     distance: u8,
     meas_results: Vec<u8>,
+    /// Decoded detector events (one bool per ancilla).
+    detector_events: Vec<bool>,
+    observable_flips: Option<u64>,
+}
+
+/// Decode QSSF RLE detector events to a flat bool vector.
+///
+/// Token: bit 7 = mode (0=zeros, 1=ones), bits 0–6 = run length.
+fn decode_rle_events(rle: &[u8], ancilla_count: usize) -> Vec<bool> {
+    let mut out = Vec::with_capacity(ancilla_count);
+    for &tok in rle {
+        let mode = (tok & 0x80) != 0;
+        let run = (tok & 0x7F) as usize;
+        for _ in 0..run {
+            out.push(mode);
+        }
+    }
+    out.resize(ancilla_count, false);
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +269,9 @@ pub struct PySyndromeFrame {
     pub code_type: u8,
     pub distance: u8,
     meas_results_raw: Vec<u8>,
+    /// Decoded detector events (one bool per ancilla, len == ancilla_count).
+    detector_events: Vec<bool>,
+    observable_flips: Option<u64>,
 }
 
 #[pymethods]
@@ -201,9 +308,24 @@ impl PySyndromeFrame {
     fn distance(&self) -> u8 {
         self.distance
     }
+    #[getter]
+    fn observable_flips(&self) -> Option<u64> {
+        self.observable_flips
+    }
 
     fn meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new_bound(py, &self.meas_results_raw)
+    }
+
+    /// Detector events as a 1-D NumPy bool array of shape `(ancilla_count,)`.
+    fn to_numpy_detector_events<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        self.detector_events.clone().into_pyarray_bound(py)
+    }
+
+    /// Ancilla measurement results as a 1-D NumPy int8 array of shape `(ancilla_count,)`.
+    fn to_numpy_meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i8>> {
+        let data: Vec<i8> = self.meas_results_raw.iter().map(|&v| v as i8).collect();
+        data.into_pyarray_bound(py)
     }
 
     fn null_decode(&self) -> PyDecoderResult {
@@ -214,6 +336,186 @@ impl PySyndromeFrame {
         format!(
             "SyndromeFrame(frame_id={}, round={}, detector_events={}/{})",
             self.frame_id, self.round, self.detector_event_count, self.ancilla_count,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PySyndromeWindow
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "SyndromeWindow")]
+pub struct PySyndromeWindow {
+    inner: SyndromeWindow,
+}
+
+#[pymethods]
+impl PySyndromeWindow {
+    /// Create an empty window.
+    ///
+    /// Parameters
+    /// ----------
+    /// ancilla_count : int
+    ///     Number of ancilla qubits (columns in the detector matrix).
+    /// window_depth : int
+    ///     Maximum number of rounds to retain before the oldest is evicted.
+    #[new]
+    fn new(ancilla_count: usize, window_depth: usize) -> Self {
+        Self {
+            inner: SyndromeWindow::new(ancilla_count, window_depth),
+        }
+    }
+
+    /// Push a `SyndromeFrame` into the window, evicting the oldest if full.
+    fn push(&mut self, frame: &PySyndromeFrame) {
+        let data = OwnedSyndromeData {
+            frame_id: frame.frame_id,
+            round: frame.round,
+            timestamp_ns: frame.timestamp_ns,
+            detector_events: frame.detector_events.clone(),
+            meas_results: frame.meas_results_raw.iter().map(|&v| v as i8).collect(),
+        };
+        self.inner.push_owned(data);
+    }
+
+    /// Number of rounds currently held in the window.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn is_full(&self) -> bool {
+        self.inner.is_full()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Detector matrix as a 2-D NumPy bool array of shape `(rounds, ancilla_count)`.
+    ///
+    /// Row 0 is the oldest round; row `len()-1` is the newest.
+    fn to_numpy_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<bool>>> {
+        let rounds = self.inner.len();
+        let ancillas = self.inner.ancilla_count;
+        if rounds == 0 {
+            let arr = Array2::<bool>::default((0, ancillas));
+            return Ok(arr.into_pyarray_bound(py));
+        }
+        let flat = self.inner.detector_matrix().to_vec();
+        let arr = Array2::from_shape_vec((rounds, ancillas), flat)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(arr.into_pyarray_bound(py))
+    }
+
+    /// Indices (into the flat detector matrix) of all fired detectors across all rounds.
+    fn active_detectors(&self) -> Vec<u32> {
+        self.inner.active_detectors()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SyndromeWindow(rounds={}/{}, ancillas={})",
+            self.inner.len(),
+            self.inner.window_depth,
+            self.inner.ancilla_count,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyDetectorErrorModel
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "DetectorErrorModel")]
+pub struct PyDetectorErrorModel {
+    inner: DetectorErrorModel,
+}
+
+#[pymethods]
+impl PyDetectorErrorModel {
+    /// Parse a Stim DEM from its text representation.
+    #[staticmethod]
+    fn parse(text: &str) -> PyResult<Self> {
+        DetectorErrorModel::parse(text)
+            .map(|dem| Self { inner: dem })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Load a Stim DEM from a file path.
+    #[staticmethod]
+    fn from_file(path: &str) -> PyResult<Self> {
+        let text = std::fs::read_to_string(path).map_err(|e| PyIOError::new_err(e.to_string()))?;
+        DetectorErrorModel::parse(&text)
+            .map(|dem| Self { inner: dem })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[getter]
+    fn detector_count(&self) -> usize {
+        self.inner.detector_count
+    }
+
+    #[getter]
+    fn observable_count(&self) -> usize {
+        self.inner.observable_count
+    }
+
+    #[getter]
+    fn error_count(&self) -> usize {
+        self.inner.errors.len()
+    }
+
+    /// Build a `pymatching.Matching` object from this DEM.
+    ///
+    /// Requires `pymatching` to be installed (`pip install pymatching`).
+    /// Edges are added with weight `-ln(p/(1-p))` and `fault_ids` identifying
+    /// which observables flip when the error fires.
+    fn to_pymatching(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let graph = SpacetimeGraph::from_dem(&self.inner);
+
+        let pymatching = py.import_bound("pymatching").map_err(|_| {
+            PyImportError::new_err("pymatching not found — install it with: pip install pymatching")
+        })?;
+
+        let matching = pymatching.call_method0("Matching")?;
+
+        let boundary = graph.boundary_node;
+
+        // Collect boundary node indices into a Python set
+        let boundary_set = PySet::new_bound(py, &[boundary])?;
+
+        for edge in &graph.edges {
+            let u = edge.u as usize;
+            let v = edge.v as usize;
+            let weight = edge.weight as f64;
+            let fault_ids: Vec<usize> = edge.fault_ids.iter().map(|&id| id as usize).collect();
+
+            let kwargs = pyo3::types::PyDict::new_bound(py);
+            kwargs.set_item("weight", weight)?;
+            if !fault_ids.is_empty() {
+                kwargs.set_item("fault_ids", fault_ids)?;
+            }
+            matching.call_method("add_edge", (u, v), Some(&kwargs))?;
+        }
+
+        // Mark the boundary node
+        matching.call_method1("set_boundary_nodes", (boundary_set,))?;
+
+        Ok(matching.into())
+    }
+
+    /// Serialise this DEM as a `HardwareSchema`-compatible JSON string.
+    fn to_schema_json(&self, name: &str) -> PyResult<String> {
+        let schema = stabstream_dem::schema_gen::schema_from_dem(&self.inner, name);
+        serde_json::to_string_pretty(&schema).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DetectorErrorModel(detectors={}, observables={}, errors={})",
+            self.inner.detector_count,
+            self.inner.observable_count,
+            self.inner.errors.len(),
         )
     }
 }
@@ -235,8 +537,11 @@ impl FrameSource for FileSource {
         rt.block_on(async {
             match self.stream.next_frame().await? {
                 Some(f) => {
+                    let ancilla_count = f.header.ancilla_count as usize;
                     let det = f.detector_event_count();
                     let meas = f.payload.meas_results.iter().map(|&v| v as u8).collect();
+                    let events = decode_rle_events(f.payload.detector_events, ancilla_count);
+                    let obs_flips = f.metadata.as_ref().and_then(|m| m.observable_flips);
                     Ok(Some(OwnedFrame {
                         frame_id: f.header.frame_id,
                         round: f.header.round,
@@ -247,6 +552,8 @@ impl FrameSource for FileSource {
                         code_type: f.header.code_type,
                         distance: f.header.distance,
                         meas_results: meas,
+                        detector_events: events,
+                        observable_flips: obs_flips,
                     }))
                 }
                 None => Ok(None),
@@ -264,8 +571,11 @@ impl FrameSource for TcpSource {
         rt.block_on(async {
             match self.stream.next_frame().await? {
                 Some(f) => {
+                    let ancilla_count = f.header.ancilla_count as usize;
                     let det = f.detector_event_count();
                     let meas = f.payload.meas_results.iter().map(|&v| v as u8).collect();
+                    let events = decode_rle_events(f.payload.detector_events, ancilla_count);
+                    let obs_flips = f.metadata.as_ref().and_then(|m| m.observable_flips);
                     Ok(Some(OwnedFrame {
                         frame_id: f.header.frame_id,
                         round: f.header.round,
@@ -276,6 +586,8 @@ impl FrameSource for TcpSource {
                         code_type: f.header.code_type,
                         distance: f.header.distance,
                         meas_results: meas,
+                        detector_events: events,
+                        observable_flips: obs_flips,
                     }))
                 }
                 None => Ok(None),
@@ -335,9 +647,8 @@ impl PyStabstreamStream {
         if slf.runtime.is_none() || slf.source.is_none() {
             return Err(PyIOError::new_err("stream is closed"));
         }
-        // SAFETY: both fields are Some (checked above); we take a raw pointer to
-        // runtime so we can simultaneously borrow source mutably. The runtime is
-        // heap-allocated and stable for the lifetime of the PyRefMut borrow.
+        // SAFETY: both fields are Some (checked above); raw pointer lets us
+        // borrow source mutably while holding an immutable ref to runtime.
         let rt_ptr = slf.runtime.as_ref().unwrap() as *const Runtime;
         let src = slf.source.as_mut().unwrap();
         let rt_ref = unsafe { &*rt_ptr };
@@ -353,6 +664,8 @@ impl PyStabstreamStream {
                 code_type: f.code_type,
                 distance: f.distance,
                 meas_results_raw: f.meas_results,
+                detector_events: f.detector_events,
+                observable_flips: f.observable_flips,
             })),
             Ok(None) => Ok(None),
             Err(e) => Err(PyIOError::new_err(e.to_string())),
@@ -375,16 +688,56 @@ impl PyStabstreamStream {
 }
 
 // ---------------------------------------------------------------------------
+// SpacetimeGraph Python wrapper (read-only inspection)
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "SpacetimeGraph")]
+pub struct PySpacetimeGraph {
+    inner: Arc<SpacetimeGraph>,
+}
+
+#[pymethods]
+impl PySpacetimeGraph {
+    #[getter]
+    fn node_count(&self) -> usize {
+        self.inner.nodes.len()
+    }
+
+    #[getter]
+    fn edge_count(&self) -> usize {
+        self.inner.edges.len()
+    }
+
+    #[getter]
+    fn boundary_node(&self) -> usize {
+        self.inner.boundary_node
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SpacetimeGraph(nodes={}, edges={}, boundary={})",
+            self.inner.nodes.len(),
+            self.inner.edges.len(),
+            self.inner.boundary_node,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
 #[pymodule]
 fn stabstream(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySyndromeFrame>()?;
+    m.add_class::<PySyndromeWindow>()?;
     m.add_class::<PyStabstreamStream>()?;
     m.add_class::<PyCodeType>()?;
     m.add_class::<PyDecoderResult>()?;
     m.add_class::<PyLogicalCorrection>()?;
+    m.add_class::<PyDetectorErrorModel>()?;
+    m.add_class::<PySpacetimeGraph>()?;
+    m.add_class::<PyLogicalErrorAccumulator>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

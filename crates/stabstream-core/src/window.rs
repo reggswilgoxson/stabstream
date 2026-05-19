@@ -88,6 +88,15 @@ impl SyndromeWindow {
         self.rebuild_matrix();
     }
 
+    /// Push pre-owned syndrome data directly, evicting the oldest when full.
+    pub fn push_owned(&mut self, data: OwnedSyndromeData) {
+        if self.frames.len() == self.window_depth {
+            self.frames.pop_front();
+        }
+        self.frames.push_back(data);
+        self.rebuild_matrix();
+    }
+
     /// Number of rounds currently in the window.
     pub fn len(&self) -> usize {
         self.frames.len()
