@@ -136,7 +136,7 @@ fn percentile(sorted: &[u64], p: u8) -> u64 {
     if sorted.is_empty() {
         return 0;
     }
-    let idx = ((sorted.len() as u64 * p as u64 + 99) / 100) as usize;
+    let idx = (sorted.len() as u64 * p as u64).div_ceil(100) as usize;
     sorted[idx.saturating_sub(1).min(sorted.len() - 1)]
 }
 
