@@ -1,14 +1,16 @@
 [package]
-name         = "stabstream-decoder"
+name         = "stabstream-dem"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description  = "Decoder trait and reference implementations for stabstream QEC pipelines"
+description  = "Stim detector error model (DEM) parser and spacetime syndrome graph for stabstream"
 
 [dependencies]
 stabstream-core = { path = "../stabstream-core" }
-stabstream-dem  = { path = "../stabstream-dem" }
 thiserror.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+uuid.workspace = true

@@ -113,6 +113,10 @@ pub struct OwnedFrame {
     pub ancilla_count: u16,
     pub detector_events_rle: Vec<u8>,
     pub meas_results: Vec<i8>,
+    /// Ground-truth observable flip bitmask written by `StimObsImporter`.
+    /// Bit i = 1 means observable i was truly flipped by the physical error
+    /// pattern. Stored in `FrameMetadata::observable_flips` when exporting.
+    pub observable_flips: Option<u64>,
 }
 
 impl OwnedFrame {
@@ -187,9 +191,76 @@ impl<R: BufRead> StimImporter<R> {
             ancilla_count,
             detector_events_rle: de_rle,
             meas_results: meas,
+            observable_flips: None,
         };
         self.frame_id += 1;
         Ok(Some(frame))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stim observable importer (reads --obs-out-format=01 files)
+// ---------------------------------------------------------------------------
+
+/// Reads Stim's observable-flip output (01 text format, one line per shot)
+/// and returns `u64` bitmasks where bit i = 1 means observable i was flipped.
+///
+/// Pair with `StimImporter` to populate `OwnedFrame::observable_flips`.
+pub struct StimObsImporter<R: BufRead> {
+    reader: R,
+}
+
+impl<R: BufRead> StimObsImporter<R> {
+    pub fn new(reader: R) -> Self {
+        Self { reader }
+    }
+
+    /// Read the next observable flip bitmask. Returns `Ok(None)` at EOF.
+    pub fn next_flips(&mut self) -> Result<Option<u64>, StabstreamError> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = self.reader.read_line(&mut line)?;
+            if n == 0 {
+                return Ok(None);
+            }
+            if !line.trim().is_empty() {
+                break;
+            }
+        }
+        let mut mask: u64 = 0;
+        for (i, b) in line.trim().bytes().enumerate().take(64) {
+            if b == b'1' {
+                mask |= 1u64 << i;
+            }
+        }
+        Ok(Some(mask))
+    }
+}
+
+/// Zip a `StimImporter` and a `StimObsImporter` together, injecting
+/// observable ground truth into each `OwnedFrame`.
+pub struct StimWithObsImporter<R1: BufRead, R2: BufRead> {
+    det: StimImporter<R1>,
+    obs: StimObsImporter<R2>,
+}
+
+impl<R1: BufRead, R2: BufRead> StimWithObsImporter<R1, R2> {
+    pub fn new(det_reader: R1, obs_reader: R2) -> Self {
+        Self {
+            det: StimImporter::new(det_reader),
+            obs: StimObsImporter::new(obs_reader),
+        }
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<OwnedFrame>, StabstreamError> {
+        match self.det.next_frame()? {
+            None => Ok(None),
+            Some(mut frame) => {
+                frame.observable_flips = self.obs.next_flips()?;
+                Ok(Some(frame))
+            }
+        }
     }
 }
 
@@ -215,6 +286,15 @@ pub fn export_owned_frame<W: Write>(
     let meas_i8: &[i8] = unsafe {
         std::slice::from_raw_parts(meas_u8.as_ptr().cast::<i8>(), meas_u8.len())
     };
+    use stabstream_core::frame::FrameMetadata;
+    let metadata = if frame.observable_flips.is_some() {
+        Some(FrameMetadata {
+            observable_flips: frame.observable_flips,
+            ..Default::default()
+        })
+    } else {
+        None
+    };
     let sf = SyndromeFrame {
         header,
         payload: SyndromePayload {
@@ -223,7 +303,7 @@ pub fn export_owned_frame<W: Write>(
             timing_offsets: &[],
             parity_checks: &[],
         },
-        metadata: None,
+        metadata,
         annotations: None,
     };
     exporter.write_frame(&sf)

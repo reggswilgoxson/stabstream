@@ -34,6 +34,27 @@ pub struct HardwareSchema {
     pub stabilizers: Vec<StabilizerEntry>,
     pub measurement_cycle_us: f32,
     pub ancilla_layout: String,
+
+    // ---- qLDPC extensions (optional, absent for stabilizer codes) ----
+
+    /// Base64-encoded CSR sparse Hz check matrix (Z stabilizers × data qubits).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ldpc_hz_matrix: Option<String>,
+    /// Base64-encoded CSR sparse Hx check matrix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ldpc_hx_matrix: Option<String>,
+    /// Base64-encoded logical-Z operator matrix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_z_matrix: Option<String>,
+    /// Base64-encoded logical-X operator matrix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_x_matrix: Option<String>,
+    /// k/n encoding rate, e.g. 12/144 ≈ 0.0833 for the Gross code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding_rate: Option<f64>,
+    /// Path to the DEM file associated with this schema (informational).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dem_path: Option<String>,
 }
 
 /// Registry that maps schema UUIDs to their loaded definitions.
