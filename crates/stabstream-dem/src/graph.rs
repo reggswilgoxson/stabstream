@@ -83,7 +83,7 @@ impl SpacetimeGraph {
                 }
                 1 => {
                     // Single-detector error: connect to boundary
-                    let u = err.detectors[0] as u32;
+                    let u = err.detectors[0];
                     let v = boundary_node as u32;
                     edges.push(SpacetimeEdge {
                         u,
@@ -93,8 +93,8 @@ impl SpacetimeGraph {
                     });
                 }
                 2 => {
-                    let u = err.detectors[0] as u32;
-                    let v = err.detectors[1] as u32;
+                    let u = err.detectors[0];
+                    let v = err.detectors[1];
                     edges.push(SpacetimeEdge {
                         u,
                         v,
@@ -108,8 +108,8 @@ impl SpacetimeGraph {
                     let dets = &err.detectors;
                     for k in 0..dets.len() - 1 {
                         edges.push(SpacetimeEdge {
-                            u: dets[k] as u32,
-                            v: dets[k + 1] as u32,
+                            u: dets[k],
+                            v: dets[k + 1],
                             weight,
                             fault_ids: fault_ids.clone(),
                         });
