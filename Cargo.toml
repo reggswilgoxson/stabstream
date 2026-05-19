@@ -56,6 +56,8 @@ uuid         = { version = "1", features = ["v4", "serde"] }
 crc32fast    = "1"
 # CLI argument parsing
 clap         = { version = "4", features = ["derive"] }
+# RNG for native noise sampling
+rand         = { version = "0.8", features = ["small_rng"] }
 # OpenTelemetry (optional, behind "otel" feature flags)
 opentelemetry       = { version = "0.22", features = ["trace"] }
 opentelemetry_sdk   = { version = "0.22", features = ["trace", "rt-tokio"] }
