@@ -1,0 +1,16 @@
+[package]
+name         = "stabstream-metrics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description  = "Logical error rate accumulation and QEC benchmarking metrics for stabstream"
+
+[dependencies]
+stabstream-core    = { path = "../stabstream-core" }
+stabstream-decoder = { path = "../stabstream-decoder" }
+thiserror.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true

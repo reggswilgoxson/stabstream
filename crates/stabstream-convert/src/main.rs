@@ -38,10 +38,7 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let schema_id: Uuid = args
-        .schema_id
-        .parse()
-        .context("invalid schema UUID")?;
+    let schema_id: Uuid = args.schema_id.parse().context("invalid schema UUID")?;
 
     match args.from {
         FromFormat::Stim => convert_stim(&args.input, &args.output, schema_id),

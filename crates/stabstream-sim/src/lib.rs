@@ -123,7 +123,8 @@ mod tests {
         assert!(bytes.len() >= 48);
         // Terminator sentinel at correct offset
         let sentinel_off = bytes.len() - 6;
-        let sentinel = u16::from_le_bytes(bytes[sentinel_off..sentinel_off + 2].try_into().unwrap());
+        let sentinel =
+            u16::from_le_bytes(bytes[sentinel_off..sentinel_off + 2].try_into().unwrap());
         assert_eq!(sentinel, 0xFFFF);
     }
 }

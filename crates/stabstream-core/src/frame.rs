@@ -68,6 +68,11 @@ pub struct FrameMetadata {
     pub cycle_us: Option<f32>,
     /// Preferred decoder enum value.
     pub decoder_hint: Option<u8>,
+    /// Tag 0x10: ground-truth observable flip bitmask (written by sim/convert
+    /// when true error pattern is known). Bit i = observable i was flipped.
+    /// Used by `LogicalErrorAccumulator` to compute p_L.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observable_flips: Option<u64>,
 }
 
 /// Optional logical qubit annotations.

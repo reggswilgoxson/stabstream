@@ -10,6 +10,8 @@ members = [
     "crates/stabstream-convert",
     "crates/stabstream-py",
     "crates/stabstream-sim",
+    "crates/stabstream-dem",
+    "crates/stabstream-metrics",
     "dashboard",
     "benches",
 ]

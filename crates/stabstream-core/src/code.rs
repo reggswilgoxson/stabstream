@@ -9,6 +9,13 @@ pub enum CodeType {
     ColorCode = 0x03,
     RepetitionCode = 0x04,
     ToricCode = 0x05,
+    /// Bivariate Bicycle / Gross codes (IBM qLDPC roadmap).
+    /// Parameters e.g. [[144, 12, 12]] with 12 logical qubits per 144 data.
+    BivariateBicycle = 0x06,
+    /// General hypergraph product codes.
+    HypergraphProduct = 0x07,
+    /// Fiber bundle codes — high encoding rate, higher stabilizer weight.
+    FiberBundle = 0x08,
     Custom = 0xFF,
 }
 
@@ -22,6 +29,9 @@ impl TryFrom<u8> for CodeType {
             0x03 => Ok(Self::ColorCode),
             0x04 => Ok(Self::RepetitionCode),
             0x05 => Ok(Self::ToricCode),
+            0x06 => Ok(Self::BivariateBicycle),
+            0x07 => Ok(Self::HypergraphProduct),
+            0x08 => Ok(Self::FiberBundle),
             0xFF => Ok(Self::Custom),
             other => Err(crate::error::StabstreamError::UnknownCodeType(other)),
         }

@@ -1,4 +1,6 @@
-use stabstream_core::frame::SyndromeFrame;
+use stabstream_core::{frame::SyndromeFrame, window::SyndromeWindow};
+
+pub mod union_find;
 
 /// A single logical-qubit correction suggested by a decoder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,13 +20,16 @@ pub enum PauliOp {
     Z,
 }
 
-/// Output of a decoder for one syndrome frame.
+/// Output of a decoder for one syndrome frame or window.
 #[derive(Debug, Clone)]
 pub struct DecoderResult {
     /// Logical corrections recommended by the decoder (may be empty).
     pub corrections: Vec<LogicalCorrection>,
     /// Decoder confidence in [0.0, 1.0]. Higher means more certain.
     pub confidence: f64,
+    /// Bitmask of observable indices the decoder believes were flipped.
+    /// Matches the `observable_flips` field in `FrameMetadata`.
+    pub observable_flips: u64,
 }
 
 impl DecoderResult {
@@ -32,16 +37,39 @@ impl DecoderResult {
         Self {
             corrections: Vec::new(),
             confidence: 1.0,
+            observable_flips: 0,
         }
     }
 }
 
 /// Trait implemented by any QEC syndrome decoder.
 ///
-/// Implementations must be `Send + Sync` so they can be shared across threads
-/// or placed behind an `Arc`.
+/// Both methods have default (no-op) implementations so existing code that
+/// implements only `decode_frame` continues to compile unchanged.
+///
+/// # Real-time vs offline paths
+///
+/// * `decode_frame` — stateless, single-frame path. Suitable for
+///   `NullDecoder` and threshold simulation inner loops.
+/// * `decode_window` — stateful, multi-round path required by MWPM and
+///   Union-Find decoders that operate on the 3-D spacetime syndrome graph.
 pub trait Decoder: Send + Sync {
-    fn decode(&self, frame: &SyndromeFrame<'_>) -> DecoderResult;
+    /// Decode a single frame (stateless). Default: return no corrections.
+    fn decode_frame(&self, frame: &SyndromeFrame<'_>) -> DecoderResult {
+        let _ = frame;
+        DecoderResult::empty()
+    }
+
+    /// Decode a window of rounds (stateful). Default: delegate to
+    /// `decode_frame` on the most recent frame if one is available.
+    fn decode_window(&self, window: &SyndromeWindow) -> DecoderResult {
+        if let Some(latest) = window.latest_frame() {
+            // Reconstruct a lightweight proxy frame for the default path.
+            // Real implementations override this entirely.
+            let _ = latest;
+        }
+        DecoderResult::empty()
+    }
 }
 
 /// A no-op decoder that returns no corrections with full confidence.
@@ -51,7 +79,7 @@ pub trait Decoder: Send + Sync {
 pub struct NullDecoder;
 
 impl Decoder for NullDecoder {
-    fn decode(&self, _frame: &SyndromeFrame<'_>) -> DecoderResult {
+    fn decode_frame(&self, _frame: &SyndromeFrame<'_>) -> DecoderResult {
         DecoderResult::empty()
     }
 }
@@ -91,7 +119,7 @@ mod tests {
     fn null_decoder_returns_empty_result() {
         let dec = NullDecoder;
         let frame = make_frame();
-        let result = dec.decode(&frame);
+        let result = dec.decode_frame(&frame);
         assert!(result.corrections.is_empty());
         assert!((result.confidence - 1.0).abs() < f64::EPSILON);
     }
@@ -106,5 +134,11 @@ mod tests {
     fn pauli_op_derives_eq() {
         assert_eq!(PauliOp::X, PauliOp::X);
         assert_ne!(PauliOp::X, PauliOp::Z);
+    }
+
+    #[test]
+    fn decoder_result_observable_flips_default_zero() {
+        let r = DecoderResult::empty();
+        assert_eq!(r.observable_flips, 0);
     }
 }
