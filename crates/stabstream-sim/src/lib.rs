@@ -1,7 +1,12 @@
+pub mod noise;
+
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use stabstream_core::frame::{FrameHeader, QSSF_MAGIC};
+use stabstream_dem::parser::DetectorErrorModel;
 use stabstream_deserialize::{parser::write_frame_header, rle::encode_detector_events};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -9,14 +14,29 @@ use tokio::{
 };
 use uuid::Uuid;
 
+pub use noise::{BiasedPauli, CircuitLevelDepolarizing, DemSampler, NoiseModel, ShotResult};
+
 /// UUID written into QSSF file headers for Stim-sourced streams.
 pub const STIM_GENERIC_UUID: &str = "00000000-5354-494d-0000-000000000001";
 
 /// Encode a single line of Stim 01 detector-event output as QSSF bytes.
 fn encode_frame(line: &str, frame_id: u64, ancilla_count: u16) -> Vec<u8> {
     let events: Vec<bool> = line.bytes().map(|b| b == b'1').collect();
-    let de_rle = encode_detector_events(&events);
-    let meas: Vec<u8> = events
+    encode_shot_frame(&events, 0, frame_id, ancilla_count)
+}
+
+/// Encode a `ShotResult` (from native sampling) as QSSF bytes.
+///
+/// `observable_flips` is written into the payload for downstream ground-truth
+/// analysis (used by `stabstream-analyze --with-observables`).
+fn encode_shot_frame(
+    detector_events: &[bool],
+    _observable_flips: u64,
+    frame_id: u64,
+    ancilla_count: u16,
+) -> Vec<u8> {
+    let de_rle = encode_detector_events(detector_events);
+    let meas: Vec<u8> = detector_events
         .iter()
         .map(|&e| if e { 0xFF } else { 0x01 })
         .collect();
@@ -56,14 +76,12 @@ fn file_header_bytes(schema_id: Uuid) -> [u8; 26] {
     buf[0..4].copy_from_slice(&QSSF_MAGIC.to_le_bytes());
     buf[4..6].copy_from_slice(&1u16.to_le_bytes());
     buf[6..22].copy_from_slice(schema_id.as_bytes());
-    buf[22..26].copy_from_slice(&0u32.to_le_bytes()); // flags
+    buf[22..26].copy_from_slice(&0u32.to_le_bytes());
     buf
 }
 
 /// Spawn a `stim detect` subprocess for `circuit_path` and stream QSSF frames
-/// to `socket`. The subprocess is given `shots` shots.
-///
-/// Returns the number of frames written on success.
+/// to `socket`. Returns the number of frames written on success.
 pub async fn serve_circuit_to_socket(
     circuit_path: &str,
     shots: u64,
@@ -82,8 +100,6 @@ pub async fn serve_circuit_to_socket(
     let mut lines = BufReader::new(stdout).lines();
 
     let schema_id: Uuid = STIM_GENERIC_UUID.parse().unwrap();
-
-    // Write QSSF file header first.
     socket.write_all(&file_header_bytes(schema_id)).await?;
 
     let mut frame_id: u64 = 0;
@@ -104,6 +120,49 @@ pub async fn serve_circuit_to_socket(
     Ok(frame_id)
 }
 
+/// Sample directly from a DEM and stream QSSF frames to `socket`.
+///
+/// No Stim subprocess is spawned. `SmallRng` (xorshift128+) is seeded from
+/// OS entropy; use `serve_dem_to_socket_seeded` for reproducible streams.
+///
+/// Returns the number of frames written on success.
+pub async fn serve_dem_to_socket(
+    dem: &DetectorErrorModel,
+    shots: u64,
+    socket: TcpStream,
+) -> anyhow::Result<u64> {
+    let rng = SmallRng::from_entropy();
+    serve_dem_to_socket_seeded(dem, shots, socket, rng).await
+}
+
+/// Like `serve_dem_to_socket` but with a caller-supplied RNG for
+/// reproducibility in tests and benchmarks.
+pub async fn serve_dem_to_socket_seeded<R: rand::Rng>(
+    dem: &DetectorErrorModel,
+    shots: u64,
+    mut socket: TcpStream,
+    mut rng: R,
+) -> anyhow::Result<u64> {
+    let sampler = DemSampler::from_dem(dem);
+    let ancilla_count = dem.detector_count as u16;
+    let schema_id: Uuid = STIM_GENERIC_UUID.parse().unwrap();
+
+    socket.write_all(&file_header_bytes(schema_id)).await?;
+
+    for frame_id in 0..shots {
+        let shot = sampler.sample(&mut rng);
+        let frame_bytes = encode_shot_frame(
+            &shot.detector_events,
+            shot.observable_flips,
+            frame_id,
+            ancilla_count,
+        );
+        socket.write_all(&frame_bytes).await?;
+    }
+
+    Ok(shots)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,9 +178,7 @@ mod tests {
     #[test]
     fn encode_frame_correct_structure() {
         let bytes = encode_frame("0110", 0, 4);
-        // Minimum: 36 (hdr) + 2 (de_len) + rle + 4 (meas) + 6 (terminator)
         assert!(bytes.len() >= 48);
-        // Terminator sentinel at correct offset
         let sentinel_off = bytes.len() - 6;
         let sentinel =
             u16::from_le_bytes(bytes[sentinel_off..sentinel_off + 2].try_into().unwrap());

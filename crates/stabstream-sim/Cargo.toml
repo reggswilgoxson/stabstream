@@ -16,6 +16,8 @@ path = "src/main.rs"
 stabstream-core        = { path = "../stabstream-core" }
 stabstream-convert     = { path = "../stabstream-convert" }
 stabstream-deserialize = { path = "../stabstream-deserialize" }
+stabstream-dem         = { path = "../stabstream-dem" }
+rand.workspace         = true
 tokio.workspace    = true
 clap.workspace     = true
 anyhow.workspace   = true
