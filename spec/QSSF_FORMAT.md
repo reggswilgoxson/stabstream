@@ -123,6 +123,12 @@ Offset  Size  Field    Description
 | 0x02 | f32 LE   | Fridge temperature in millikelvin |
 | 0x03 | f32 LE   | Measurement cycle time in microseconds |
 | 0x04 | u8       | Preferred decoder hint |
+| 0x10 | u64 LE   | Observable flip bitmask (ground truth from simulator) |
+
+Tag `0x10` carries the true logical observable flip bitmask for the frame, as
+written by `stabstream-convert stim-to-qssf --with-observables`. Bit `i` = 1
+means observable `i` was flipped by the physical error pattern. Used by
+`LogicalErrorAccumulator::record()` to compute p_L.
 
 Unknown tags must be skipped (using the `len` field).
 
@@ -164,12 +170,15 @@ Parsers must verify the CRC before yielding the frame.
 
 | Value | Name           | Description |
 |-------|----------------|-------------|
-| 0x01  | SurfaceCode    | Rotated or unrotated surface code |
-| 0x02  | HoneycombCode  | Floquet/honeycomb code |
-| 0x03  | ColorCode      | 2D color code (triangular lattice) |
-| 0x04  | RepetitionCode | 1D repetition code (bit-flip or phase-flip) |
-| 0x05  | ToricCode      | Toric code (periodic boundary conditions) |
-| 0xFF  | Custom         | Hardware-defined; schema provides full description |
+| 0x01  | SurfaceCode        | Rotated or unrotated surface code |
+| 0x02  | HoneycombCode      | Floquet/honeycomb code |
+| 0x03  | ColorCode          | 2D color code (triangular lattice) |
+| 0x04  | RepetitionCode     | 1D repetition code (bit-flip or phase-flip) |
+| 0x05  | ToricCode          | Toric code (periodic boundary conditions) |
+| 0x06  | BivariateBicycle   | IBM BB/Gross qLDPC codes (e.g. `[[144,12,12]]`) |
+| 0x07  | HypergraphProduct  | Hypergraph product qLDPC codes |
+| 0x08  | FiberBundle        | Fiber bundle codes |
+| 0xFF  | Custom             | Hardware-defined; schema provides full description |
 
 ---
 
@@ -263,10 +272,17 @@ configuration. They are identified by a UUID v4 and must be registered in a
 
 ## 11. Changelog
 
+### v1.1.0 — 2025-05-19
+
+- Added metadata tag `0x10` (u64 LE): observable flip bitmask ground truth.
+- Added `CodeType` values: `BivariateBicycle (0x06)`, `HypergraphProduct (0x07)`, `FiberBundle (0x08)`.
+- `HardwareSchema` extended with optional qLDPC fields: `ldpc_hz_matrix`, `ldpc_hx_matrix`, `logical_z_matrix`, `logical_x_matrix`, `encoding_rate`, `dem_path`.
+- Clarified file header size: 26 bytes (magic 4 + version 2 + schema_id 16 + flags 4).
+
 ### v1.0.0 — 2024-01-01 (initial release)
 
 - Initial specification of the QSSF binary format.
-- File header (24 bytes), frame header (36 bytes), syndrome payload.
+- File header (26 bytes), frame header (36 bytes), syndrome payload.
 - RLE encoding for detector event bitfields.
 - TLV metadata blocks and logical annotation blocks.
 - Frame terminator with CRC-32/ISO-HDLC integrity check.
