@@ -198,7 +198,11 @@ mod tests {
         for hz_row in &hz {
             for hx_row in &hx {
                 let overlap = hz_row.iter().filter(|c| hx_row.contains(c)).count();
-                assert_eq!(overlap % 2, 0, "Hz/Hx rows must overlap evenly (CSS commutativity)");
+                assert_eq!(
+                    overlap % 2,
+                    0,
+                    "Hz/Hx rows must overlap evenly (CSS commutativity)"
+                );
             }
         }
         let _ = n;

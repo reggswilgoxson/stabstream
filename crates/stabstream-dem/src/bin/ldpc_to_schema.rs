@@ -15,10 +15,7 @@
 /// ```
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
-use stabstream_dem::{
-    ldpc::BbParams,
-    schema_gen::schema_from_bb,
-};
+use stabstream_dem::{ldpc::BbParams, schema_gen::schema_from_bb};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -83,8 +80,16 @@ fn parse_poly(s: &str) -> Result<Vec<(usize, usize)>> {
     s.split_whitespace()
         .map(|pair| {
             let mut it = pair.splitn(2, ',');
-            let di: usize = it.next().context("missing di")?.parse().context("di not a number")?;
-            let dj: usize = it.next().context("missing dj")?.parse().context("dj not a number")?;
+            let di: usize = it
+                .next()
+                .context("missing di")?
+                .parse()
+                .context("di not a number")?;
+            let dj: usize = it
+                .next()
+                .context("missing dj")?
+                .parse()
+                .context("dj not a number")?;
             Ok((di, dj))
         })
         .collect()
@@ -100,25 +105,40 @@ fn main() -> Result<()> {
             let l = args.l.context("--l is required for --bb custom")?;
             let m = args.m.context("--m is required for --bb custom")?;
             let poly_a = parse_poly(
-                args.poly_a.as_deref().context("--poly-a is required for --bb custom")?,
+                args.poly_a
+                    .as_deref()
+                    .context("--poly-a is required for --bb custom")?,
             )?;
             let poly_b = parse_poly(
-                args.poly_b.as_deref().context("--poly-b is required for --bb custom")?,
+                args.poly_b
+                    .as_deref()
+                    .context("--poly-b is required for --bb custom")?,
             )?;
-            let distance = args.distance.context("--distance is required for --bb custom")?;
-            let logical_qubits =
-                args.logical_qubits.context("--logical-qubits is required for --bb custom")?;
+            let distance = args
+                .distance
+                .context("--distance is required for --bb custom")?;
+            let logical_qubits = args
+                .logical_qubits
+                .context("--logical-qubits is required for --bb custom")?;
             if poly_a.is_empty() || poly_b.is_empty() {
                 bail!("polynomial support must be non-empty");
             }
-            BbParams { l, m, poly_a, poly_b, distance, logical_qubits }
+            BbParams {
+                l,
+                m,
+                poly_a,
+                poly_b,
+                distance,
+                logical_qubits,
+            }
         }
     };
 
     let n = params.n();
     let name = args.name.unwrap_or_else(|| {
         format!(
-            "bivariate_bicycle_{}_{}_{}", n, params.logical_qubits, params.distance
+            "bivariate_bicycle_{}_{}_{}",
+            n, params.logical_qubits, params.distance
         )
     });
 
