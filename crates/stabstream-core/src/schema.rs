@@ -101,6 +101,8 @@ impl SchemaRegistry {
             include_str!("../../../schemas/honeycomb_d4.json"),
             include_str!("../../../schemas/color_code_d5.json"),
             include_str!("../../../schemas/repetition_d11.json"),
+            include_str!("../../../schemas/bivariate_bicycle_144_12_12.json"),
+            include_str!("../../../schemas/bivariate_bicycle_72_12_6.json"),
         ];
         let mut registry = Self::new();
         for &json in BUILTIN_SCHEMAS {
@@ -139,7 +141,7 @@ mod tests {
     #[test]
     fn builtins_load() {
         let reg = SchemaRegistry::with_builtins().unwrap();
-        assert_eq!(reg.len(), 6, "expected 6 built-in schemas");
+        assert_eq!(reg.len(), 8, "expected 8 built-in schemas");
     }
 
     #[test]
