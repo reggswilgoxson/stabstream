@@ -418,6 +418,7 @@ against a synthetic surface-code d=5 stream (`synthetic_surface_d5_stream`):
 | CRC validation | 669.7 ns | ~1.49M frames/s |
 | Strict parity validation | 601.7 ns | ~1.66M frames/s |
 | RLE popcount — 24 ancillas | 4.71 ns | ~212M ops/s |
+| `analyze_file` + NullDecoder (10K frames) | 4.82 ms | ~2.07M frames/s |
 
 **Validation overhead is negligible.** Strict parity and disabled validation
 are within 2 ns of each other (~600 ns). CRC adds ~70 ns per frame.

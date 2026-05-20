@@ -13,8 +13,8 @@ use stabstream_metrics::{AnalysisReport, LogicalErrorAccumulator};
 
 use crate::player::StreamPlayer;
 
-// QSSF file header magic bytes (ASCII "QSSF").
-const QSSF_MAGIC: [u8; 4] = [0x51, 0x53, 0x53, 0x46];
+// QSSF file header magic bytes, derived from core so they can't drift.
+const QSSF_MAGIC: [u8; 4] = stabstream_core::frame::QSSF_MAGIC.to_le_bytes();
 // Zstd frame magic bytes.
 const ZSTD_MAGIC: [u8; 4] = [0xFD, 0x2F, 0xB5, 0x28];
 // QSSF file header is 26 bytes: magic(4) + version(2) + schema_id(16) + flags(4).
