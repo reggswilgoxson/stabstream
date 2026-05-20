@@ -229,8 +229,7 @@ async fn run_stream_loop<R: AsyncRead + Unpin>(
                 );
 
                 // Decode per-ancilla events for heatmap + p_L tracking
-                let det_events =
-                    decode_detector_events(frame.payload.detector_events);
+                let det_events = decode_detector_events(frame.payload.detector_events);
                 let obs_flips = frame.metadata.as_ref().and_then(|m| m.observable_flips);
                 metrics.record_ancilla_events(&det_events, frame.header.frame_id, obs_flips);
 
@@ -295,7 +294,11 @@ fn print_run_summary(metrics: &MetricsAggregator, elapsed: Duration, source: &st
         throughput
     );
     if let Some(p_l) = metrics.p_l() {
-        println!("  p_L         {:.4e}  ({} shots with obs ground truth)", p_l, metrics.obs_total());
+        println!(
+            "  p_L         {:.4e}  ({} shots with obs ground truth)",
+            p_l,
+            metrics.obs_total()
+        );
     }
     println!("{sep}──");
     println!(

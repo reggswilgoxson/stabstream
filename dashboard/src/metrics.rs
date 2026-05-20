@@ -23,8 +23,8 @@ pub struct MetricsAggregator {
     pub ancilla_count: u16,
 
     // logical error rate from observable_flips tag 0x10
-    obs_errors: u64,  // frames where observable_flips != 0
-    obs_total: u64,   // frames where metadata.observable_flips was Some
+    obs_errors: u64, // frames where observable_flips != 0
+    obs_total: u64,  // frames where metadata.observable_flips was Some
 
     // frames-behind-real-time
     start: Instant,
