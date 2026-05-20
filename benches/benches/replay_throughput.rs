@@ -23,6 +23,9 @@ fn bench_analyze_null_decoder(c: &mut Criterion) {
     group.sample_size(10); // full analysis is slow; fewer samples
 
     group.bench_function("analyze_10k_frames_null_decoder", |b| {
+        // Pre-warm the OS page cache so all iterations see a consistent
+        // hot-cache baseline rather than variable cold-cache latency.
+        let _ = std::fs::read(&tmp).unwrap();
         b.iter(|| {
             let config = AnalysisConfig {
                 window_depth: 5,
