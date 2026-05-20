@@ -11,3 +11,6 @@ description  = "Parity checks, timing validation, and bounds enforcement for sta
 [dependencies]
 stabstream-core = { path = "../stabstream-core" }
 thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "1"

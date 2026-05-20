@@ -96,6 +96,40 @@ pub fn write_frame_header(h: &FrameHeader) -> [u8; 36] {
 }
 
 #[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use stabstream_core::frame::FrameHeader;
+
+    proptest! {
+        #[test]
+        fn frame_header_write_parse_roundtrip(
+            frame_id: u64, round: u32, timestamp_ns: u64,
+            qubit_count: u16, ancilla_count: u16, payload_len: u32,
+            code_type: u8, distance: u8, flags: u16,
+        ) {
+            let h = FrameHeader {
+                frame_id, round, timestamp_ns, qubit_count, ancilla_count,
+                payload_len, code_type, distance, flags,
+                crc32: 0, // computed by write_frame_header
+            };
+            let bytes = write_frame_header(&h);
+            let (h2, consumed) = parse_frame_header(&bytes).unwrap();
+            prop_assert_eq!(consumed, 36);
+            prop_assert_eq!(h2.frame_id, h.frame_id);
+            prop_assert_eq!(h2.round, h.round);
+            prop_assert_eq!(h2.timestamp_ns, h.timestamp_ns);
+            prop_assert_eq!(h2.qubit_count, h.qubit_count);
+            prop_assert_eq!(h2.ancilla_count, h.ancilla_count);
+            prop_assert_eq!(h2.payload_len, h.payload_len);
+            prop_assert_eq!(h2.code_type, h.code_type);
+            prop_assert_eq!(h2.distance, h.distance);
+            prop_assert_eq!(h2.flags, h.flags);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
