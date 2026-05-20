@@ -1,0 +1,2 @@
+# Local machine overrides — do not commit machine-specific settings here.
+# Add .cargo/config.toml to .gitignore and use .cargo/config.local.toml instead.
