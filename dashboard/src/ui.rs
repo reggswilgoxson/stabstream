@@ -46,7 +46,9 @@ pub fn render(
     // ── Header ──────────────────────────────────────────────────────────────
     let header = Paragraph::new(Span::styled(
         format!(" stabstream  │  schema: {schema_name}  │  round: {round}"),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ))
     .block(Block::default().borders(Borders::ALL).title(" stabstream "));
     frame.render_widget(header, chunks[idx]);
@@ -61,7 +63,11 @@ pub fn render(
     } else {
         "0".to_string()
     };
-    let export_hint = if export_pending { " [exporting…]" } else { "  [e] export" };
+    let export_hint = if export_pending {
+        " [exporting…]"
+    } else {
+        "  [e] export"
+    };
     let status_line = Line::from(vec![
         Span::raw("  decoder: "),
         Span::styled(&metrics.decoder_name, Style::default().fg(Color::Yellow)),
@@ -73,7 +79,11 @@ pub fn render(
         Span::raw("   frames behind: "),
         Span::styled(
             behind_str,
-            Style::default().fg(if behind > 50 { Color::Red } else { Color::White }),
+            Style::default().fg(if behind > 50 {
+                Color::Red
+            } else {
+                Color::White
+            }),
         ),
         Span::styled(export_hint, Style::default().fg(Color::DarkGray)),
         Span::raw("  [q] quit"),
@@ -97,8 +107,8 @@ pub fn render(
         metrics.drop_rate() * 100.0,
         metrics.total_frames(),
     );
-    let stats = Paragraph::new(stats_text)
-        .block(Block::default().borders(Borders::ALL).title(" Metrics "));
+    let stats =
+        Paragraph::new(stats_text).block(Block::default().borders(Borders::ALL).title(" Metrics "));
     frame.render_widget(stats, chunks[idx]);
     idx += 1;
 
@@ -201,12 +211,8 @@ fn render_ancilla_heatmap(frame: &mut Frame, area: Rect, metrics: &MetricsAggreg
         }
     }
 
-    let title = format!(
-        " Ancilla fire frequency  ({n} ancillas, mean {:.3}) ",
-        mean
-    );
-    let heatmap =
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
+    let title = format!(" Ancilla fire frequency  ({n} ancillas, mean {:.3}) ", mean);
+    let heatmap = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
     frame.render_widget(heatmap, area);
 }
 
