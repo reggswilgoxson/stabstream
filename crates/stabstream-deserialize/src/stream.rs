@@ -1,6 +1,6 @@
 use stabstream_core::{
     error::StabstreamError,
-    frame::{FrameHeader, SyndromeFrame, SyndromePayload},
+    frame::{FrameHeader, FrameMetadata, LogicalAnnotation, SyndromeFrame, SyndromePayload},
     schema::SchemaRegistry,
 };
 use stabstream_validate::policy::ValidationPolicy;
@@ -236,6 +236,133 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             &[]
         };
 
+        // --- TLV metadata block (flag bit 2) ---
+        let metadata: Option<FrameMetadata> =
+            if frame_hdr.flags & 0x04 != 0 {
+                // Read 2-byte tag count
+                if !self.fill_until(2).await? {
+                    return Err(StabstreamError::PayloadLengthMismatch {
+                        declared: 2,
+                        actual: self.ring_buf.available_read(),
+                    })
+                    .map(|_: Option<SyndromeFrame<'a>>| None);
+                }
+                let tag_count = {
+                    let b =
+                        self.ring_buf
+                            .peek(2)
+                            .ok_or(StabstreamError::PayloadLengthMismatch {
+                                declared: 2,
+                                actual: self.ring_buf.available_read(),
+                            })?;
+                    u16::from_le_bytes([b[0], b[1]]) as usize
+                };
+                self.ring_buf.consume(2);
+
+                let mut meta = FrameMetadata::default();
+                for _ in 0..tag_count {
+                    // Read tag (2) + len (2)
+                    if !self.fill_until(4).await? {
+                        break;
+                    }
+                    let (tag, val_len) = {
+                        let b = self.ring_buf.peek(4).ok_or(
+                            StabstreamError::PayloadLengthMismatch {
+                                declared: 4,
+                                actual: self.ring_buf.available_read(),
+                            },
+                        )?;
+                        (
+                            u16::from_le_bytes([b[0], b[1]]),
+                            u16::from_le_bytes([b[2], b[3]]) as usize,
+                        )
+                    };
+                    self.ring_buf.consume(4);
+
+                    if !self.fill_until(val_len).await? {
+                        break;
+                    }
+                    let val_slice = self.ring_buf.peek(val_len).ok_or(
+                        StabstreamError::PayloadLengthMismatch {
+                            declared: val_len as u32,
+                            actual: self.ring_buf.available_read(),
+                        },
+                    )?;
+                    // Decode known tags
+                    match (tag, val_len) {
+                        (0x0001, _) => {
+                            meta.hardware_id = String::from_utf8(val_slice.to_vec()).ok();
+                        }
+                        (0x0002, 4) => {
+                            meta.temperature_mk =
+                                Some(f32::from_le_bytes(val_slice.try_into().unwrap()));
+                        }
+                        (0x0003, 4) => {
+                            meta.cycle_us = Some(f32::from_le_bytes(val_slice.try_into().unwrap()));
+                        }
+                        (0x0004, 1) => {
+                            meta.decoder_hint = Some(val_slice[0]);
+                        }
+                        (0x0010, 8) => {
+                            meta.observable_flips =
+                                Some(u64::from_le_bytes(val_slice.try_into().unwrap()));
+                        }
+                        _ => {} // unknown or malformed tag — skip
+                    }
+                    self.ring_buf.consume(val_len);
+                }
+                Some(meta)
+            } else {
+                None
+            };
+
+        // --- Logical annotation block (flag bit 3) ---
+        let annotations: Option<Vec<LogicalAnnotation>> = if frame_hdr.flags & 0x08 != 0 {
+            // 1-byte count
+            if !self.fill_until(1).await? {
+                return Err(StabstreamError::PayloadLengthMismatch {
+                    declared: 1,
+                    actual: self.ring_buf.available_read(),
+                })
+                .map(|_: Option<SyndromeFrame<'a>>| None);
+            }
+            let count = self
+                .ring_buf
+                .peek(1)
+                .ok_or(StabstreamError::PayloadLengthMismatch {
+                    declared: 1,
+                    actual: self.ring_buf.available_read(),
+                })?[0] as usize;
+            self.ring_buf.consume(1);
+
+            let ann_bytes_len = count * 10;
+            if ann_bytes_len > 0 {
+                if !self.fill_until(ann_bytes_len).await? {
+                    return Err(StabstreamError::PayloadLengthMismatch {
+                        declared: ann_bytes_len as u32,
+                        actual: self.ring_buf.available_read(),
+                    })
+                    .map(|_: Option<SyndromeFrame<'a>>| None);
+                }
+                let raw = self.ring_buf.peek(ann_bytes_len).ok_or(
+                    StabstreamError::PayloadLengthMismatch {
+                        declared: ann_bytes_len as u32,
+                        actual: self.ring_buf.available_read(),
+                    },
+                )?;
+                // Prepend the count byte for parse_annotations
+                let mut ann_buf = Vec::with_capacity(1 + ann_bytes_len);
+                ann_buf.push(count as u8);
+                ann_buf.extend_from_slice(raw);
+                self.ring_buf.consume(ann_bytes_len);
+                Some(parser::parse_annotations(&ann_buf))
+            } else {
+                Some(Vec::new())
+            }
+        } else {
+            None
+        };
+
         // Validate frame terminator: 0xFFFF sentinel (2 bytes) + CRC32 of header (4 bytes).
         if self.fill_until(6).await? {
             if let Some(term) = self.ring_buf.peek(6) {
@@ -265,8 +392,8 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         let frame = SyndromeFrame {
             header: frame_hdr,
             payload,
-            metadata: None,
-            annotations: None,
+            metadata,
+            annotations,
         };
 
         let _validate_span =
