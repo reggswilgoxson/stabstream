@@ -231,5 +231,5 @@ fn heatmap_color(rate: f64, z: f64) -> Color {
 
 fn heatmap_height(ancilla_count: u16) -> u16 {
     let content_rows = ancilla_count.saturating_add(39) / 40;
-    (content_rows + 2).max(4).min(10)
+    (content_rows + 2).clamp(4, 10)
 }
