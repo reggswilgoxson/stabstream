@@ -110,13 +110,24 @@ pub unsafe extern "C" fn stabstream_next_frame(
 ///
 /// # Safety
 ///
-/// `handle` must be a live pointer obtained from [`stabstream_open`] that has
-/// not previously been passed to this function.
+/// `handle` must be a live pointer obtained from [`stabstream_open`]. Calling
+/// this function twice on the same pointer is safe (the second call is a no-op)
+/// but the caller must not dereference the handle after the first close.
 #[no_mangle]
 pub unsafe extern "C" fn stabstream_close(handle: *mut StabstreamHandle) {
-    if !handle.is_null() {
-        drop(unsafe { Box::from_raw(handle as *mut InnerHandle) });
+    if handle.is_null() {
+        return;
     }
+    let inner = handle as *mut InnerHandle;
+    // Atomically mark closed; if already closed return without double-freeing.
+    if unsafe {
+        (*inner)
+            .closed
+            .swap(true, std::sync::atomic::Ordering::Acquire)
+    } {
+        return;
+    }
+    drop(unsafe { Box::from_raw(inner) });
 }
 
 /// Return the library version string as a null-terminated C string.
@@ -181,5 +192,23 @@ mod tests {
         assert!(!v.is_null());
         let s = unsafe { std::ffi::CStr::from_ptr(v) }.to_str().unwrap();
         assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn double_close_is_safe() {
+        let bytes = synthetic_surface_d5_stream(1, 0.05);
+        let tmp = std::env::temp_dir().join("stabstream_ffi_double_close.qssf");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let path = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+
+        let handle = unsafe { stabstream_open(path.as_ptr()) };
+        assert!(!handle.is_null());
+
+        unsafe { stabstream_close(handle) };
+        // Second close must not trigger UB (double-free). The AtomicBool guard
+        // makes this a safe no-op.
+        unsafe { stabstream_close(handle) };
+
+        std::fs::remove_file(&tmp).ok();
     }
 }

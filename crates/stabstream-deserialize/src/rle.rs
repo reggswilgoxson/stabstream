@@ -99,3 +99,29 @@ mod tests {
         assert_eq!(decoded, events);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn rle_roundtrip(events: Vec<bool>) {
+            let encoded = encode_detector_events(&events);
+            let decoded = decode_detector_events(&encoded);
+            prop_assert_eq!(decoded, events);
+        }
+
+        #[test]
+        fn popcount_matches_decode(events: Vec<bool>) {
+            let encoded = encode_detector_events(&events);
+            let by_popcount = popcount_rle(&encoded);
+            let by_decode = decode_detector_events(&encoded)
+                .iter()
+                .filter(|&&b| b)
+                .count() as u32;
+            prop_assert_eq!(by_popcount, by_decode);
+        }
+    }
+}

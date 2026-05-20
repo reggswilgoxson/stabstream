@@ -110,4 +110,55 @@ mod tests {
         rb.write(&[7, 8, 9, 10]); // should wrap: 2 bytes at end, 2 at start
         assert_eq!(rb.available_read(), 6);
     }
+
+    #[test]
+    fn wrap_around_peek_returns_none() {
+        // Capacity = 8.  Write 6 bytes, consume 5 → read_pos=5, write_pos=6.
+        // Then write 4 more → wraps: bytes [6,7] go to indices 6,7; [8,9] at 0,1.
+        // Now read_idx = 5, available = 5 bytes, but they span indices 5..7 + 0..2
+        // which is non-contiguous. peek(5) must return None.
+        let mut rb = RingBuffer::new(8);
+        rb.write(&[1, 2, 3, 4, 5, 6]);
+        rb.consume(5); // read_pos=5, write_pos=6, avail=1
+        let written = rb.write(&[7, 8, 9, 10]); // wraps; 2 at [6..8], 2 at [0..2]
+        assert_eq!(written, 4);
+        assert_eq!(rb.available_read(), 5);
+        // The 5 bytes wrap around the ring end → peek must be None.
+        assert!(rb.peek(5).is_none(), "expected None for wrapping peek");
+        // But a smaller non-wrapping peek from index 5 still works (1 byte available at [5]).
+        assert!(rb.peek(1).is_some());
+    }
+
+    #[test]
+    fn back_to_back_wraps() {
+        // 5 write/consume cycles; each cycle writes more than half the capacity
+        // so the write position crosses the buffer end repeatedly.
+        let mut rb = RingBuffer::new(16);
+        for cycle in 0u8..5 {
+            let data: Vec<u8> = (0..10).map(|i| cycle * 10 + i).collect();
+            assert_eq!(rb.write(&data), 10);
+            assert_eq!(rb.available_read(), 10);
+            // Consume all bytes; positions advance by 10 each cycle.
+            rb.consume(10);
+            assert_eq!(rb.available_read(), 0);
+        }
+        // After 5 cycles: write_pos = read_pos = 50. Buffer is empty and healthy.
+        assert_eq!(rb.available_write(), 16);
+    }
+
+    #[test]
+    fn available_read_after_wrap() {
+        let mut rb = RingBuffer::new(8);
+        // Advance positions so read_pos and write_pos both sit near usize wrap-around.
+        // Simulate by doing many small cycles.  usize overflow tested only on platforms
+        // where usize is small; here we just verify the wrapping arithmetic holds.
+        rb.write(&[1, 2, 3]);
+        rb.consume(3);
+        rb.write(&[4, 5, 6, 7]);
+        assert_eq!(rb.available_read(), 4);
+        rb.consume(2);
+        assert_eq!(rb.available_read(), 2);
+        rb.write(&[8, 9, 10, 11]); // write_pos wraps past buf end
+        assert_eq!(rb.available_read(), 6);
+    }
 }

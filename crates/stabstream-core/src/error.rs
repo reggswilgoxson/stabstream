@@ -26,6 +26,19 @@ pub enum StabstreamError {
     #[error("payload length mismatch: header declares {declared} bytes, found {actual}")]
     PayloadLengthMismatch { declared: u32, actual: usize },
 
+    #[error("frame ID went backwards: last seen {last_id}, got {got}")]
+    FrameOutOfOrder { last_id: u64, got: u64 },
+
+    #[error("frame/schema mismatch on {field}: schema expects {expected}, frame has {actual}")]
+    SchemaFrameMismatch {
+        field: &'static str,
+        expected: u32,
+        actual: u32,
+    },
+
+    #[error("broadcast channel lagged: frames were dropped")]
+    BroadcastLagged,
+
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
 

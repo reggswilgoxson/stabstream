@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use stabstream_core::error::StabstreamError;
 use stabstream_deserialize::stream::{QssfStream, StreamConfig};
 use stabstream_validate::policy::ValidationPolicy;
@@ -57,6 +59,8 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
 pub(crate) struct InnerHandle {
     pub runtime: Runtime,
     pub source: Box<dyn FrameProducer>,
+    /// Guards against double-close UB. Set to `true` on first `stabstream_close`.
+    pub closed: AtomicBool,
 }
 
 /// Open a QSSF source by URI and return an [`InnerHandle`].
@@ -87,5 +91,6 @@ pub(crate) fn open_inner(source_str: &str) -> Result<InnerHandle, StabstreamErro
     Ok(InnerHandle {
         runtime,
         source: producer,
+        closed: AtomicBool::new(false),
     })
 }

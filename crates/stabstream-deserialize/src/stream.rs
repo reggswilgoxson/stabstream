@@ -36,6 +36,8 @@ pub struct QssfStream<R: AsyncRead + Unpin> {
     header_consumed: bool,
     /// Schema UUID read from the file header; used for StrictParity validation.
     schema_id: Uuid,
+    /// Last seen frame_id; used to detect out-of-order frames.
+    last_frame_id: Option<u64>,
 }
 
 impl<R: AsyncRead + Unpin> QssfStream<R> {
@@ -47,6 +49,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             ring_buf: RingBuffer::new(buf_size),
             header_consumed: false,
             schema_id: Uuid::nil(),
+            last_frame_id: None,
         }
     }
 
@@ -130,6 +133,17 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             self.ring_buf.consume(36);
             (h, saved)
         };
+
+        // Enforce monotonically increasing frame IDs.
+        if let Some(last_id) = self.last_frame_id {
+            if frame_hdr.frame_id <= last_id {
+                return Err(StabstreamError::FrameOutOfOrder {
+                    last_id,
+                    got: frame_hdr.frame_id,
+                });
+            }
+        }
+        self.last_frame_id = Some(frame_hdr.frame_id);
 
         // --- Parse syndrome payload fields ---
         let ancilla = frame_hdr.ancilla_count as usize;
@@ -275,13 +289,16 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         match self.config.validation {
             ValidationPolicy::StrictParity => {
                 stabstream_validate::timing::check_timing(&frame)?;
-                // Parity check requires the schema; skip if not registered.
+                // Schema-dependent checks require the schema; skip if not registered.
                 if let Ok(schema) = self
                     .config
                     .schema_registry
                     .get(&self.schema_id)
                     .map_err(|_| ())
                 {
+                    stabstream_validate::schema_consistency::check_schema_consistency(
+                        &frame, schema,
+                    )?;
                     stabstream_validate::parity::check_parity(&frame, schema)?;
                 }
             }
