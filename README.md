@@ -239,7 +239,7 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 | UF decode | 400 ns | Implemented |
 | **Total** | **~740 ns** | **< 1 µs deadline** |
 
-### Fusion Blossom MWPM Decoder (optional feature)
+### Fusion Blossom MWPM Decoder
 
 `FusionBlossomDecoder` achieves MWPM-optimal logical error rates using the
 Fusion Blossom algorithm (Higgott & Gidney 2023). Enable with
