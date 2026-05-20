@@ -16,10 +16,20 @@ harness = false
 name    = "validate_overhead"
 harness = false
 
+[[bench]]
+name    = "noise_sampler"
+harness = false
+
+[[bench]]
+name    = "replay_throughput"
+harness = false
+
 [dependencies]
 stabstream-core        = { path = "../crates/stabstream-core" }
 stabstream-deserialize = { path = "../crates/stabstream-deserialize" }
 stabstream-validate    = { path = "../crates/stabstream-validate" }
+stabstream-replay      = { path = "../crates/stabstream-replay" }
+stabstream-decoder     = { path = "../crates/stabstream-decoder" }
 tokio.workspace        = true
 
 [dev-dependencies]
