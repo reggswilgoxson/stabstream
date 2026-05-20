@@ -162,3 +162,49 @@ mod tests {
         assert_eq!(rb.available_read(), 6);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// After any sequence of writes and partial consumes the invariant
+        /// `available_read + available_write == capacity` must always hold.
+        #[test]
+        fn capacity_invariant(
+            ops in prop::collection::vec((1usize..=32usize, 0.0f64..=1.0f64), 1..=20),
+        ) {
+            let cap = 64usize;
+            let mut rb = RingBuffer::new(cap);
+            for (write_size, consume_frac) in ops {
+                let write_size = write_size.min(rb.available_write());
+                if write_size > 0 {
+                    let data = vec![0u8; write_size];
+                    rb.write(&data);
+                }
+                let to_consume = ((rb.available_read() as f64) * consume_frac) as usize;
+                rb.consume(to_consume);
+                prop_assert_eq!(
+                    rb.available_read() + rb.available_write(),
+                    cap,
+                    "capacity invariant broken after op"
+                );
+            }
+        }
+
+        /// Writing a payload and immediately peeking the same length must
+        /// return the original bytes (when no wrap-around occurs).
+        #[test]
+        fn write_peek_consume_roundtrip(payload in prop::collection::vec(any::<u8>(), 1..=512)) {
+            let cap = 1024usize;
+            let mut rb = RingBuffer::new(cap);
+            let n = rb.write(&payload);
+            prop_assert_eq!(n, payload.len());
+            let peeked = rb.peek(payload.len()).expect("peek should succeed without wrap");
+            prop_assert_eq!(peeked, payload.as_slice());
+            rb.consume(payload.len());
+            prop_assert_eq!(rb.available_read(), 0);
+        }
+    }
+}

@@ -23,3 +23,5 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - run: cargo deny check
+      - name: Compile fuzz targets
+        run: cargo build --manifest-path fuzz/Cargo.toml

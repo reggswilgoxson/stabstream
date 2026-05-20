@@ -1,0 +1,36 @@
+[package]
+name = "stabstream-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+stabstream-deserialize = { path = "../crates/stabstream-deserialize" }
+stabstream-dem = { path = "../crates/stabstream-dem" }
+
+[[bin]]
+name = "fuzz_parse_frame_header"
+path = "fuzz_targets/fuzz_parse_frame_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_dem_parser"
+path = "fuzz_targets/fuzz_dem_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode_rle"
+path = "fuzz_targets/fuzz_decode_rle.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
