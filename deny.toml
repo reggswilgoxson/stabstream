@@ -7,24 +7,25 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
-    "Unicode-DFL",
     "Zlib",
     "CC0-1.0",
+    "Unlicense",
+    "MPL-2.0",
+    "BSL-1.0",
 ]
-# Fail on any dependency with an unlicensed or unrecognized license.
-unlicensed = "deny"
-copyleft = "warn"
 
 [advisories]
-db-path = "~/.cargo/advisory-db"
-db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+ignore = [
+    # paste crate unmaintained — indirect dep via ratatui, no safe upgrade path
+    "RUSTSEC-2024-0375",
+    # instant crate unmaintained — indirect dep via criterion
+    "RUSTSEC-2024-0436",
+    # pyo3 0.21.2 PyString::from_object nul-byte issue — upgrading pyo3 requires
+    # breaking API changes to stabstream-py; tracked for future upgrade
+    "RUSTSEC-2025-0020",
+]
 
 [bans]
-# Warn on duplicate versions of the same crate (can't always avoid).
 multiple-versions = "warn"
 
 [sources]
