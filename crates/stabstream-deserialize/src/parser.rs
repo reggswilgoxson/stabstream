@@ -1,8 +1,142 @@
 use stabstream_core::{
     error::StabstreamError,
-    frame::{FileHeader, FrameHeader, QSSF_MAGIC},
+    frame::{FileHeader, FrameHeader, FrameMetadata, LogicalAnnotation, QSSF_MAGIC},
 };
 use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// TLV tag IDs for FrameMetadata fields
+// ---------------------------------------------------------------------------
+const TAG_HARDWARE_ID: u16 = 0x0001;
+const TAG_TEMPERATURE_MK: u16 = 0x0002;
+const TAG_CYCLE_US: u16 = 0x0003;
+const TAG_DECODER_HINT: u16 = 0x0004;
+const TAG_OBSERVABLE_FLIPS: u16 = 0x0010;
+
+// ---------------------------------------------------------------------------
+// TLV metadata block — write
+// ---------------------------------------------------------------------------
+
+/// Serialise a [`FrameMetadata`] as a TLV block: `u16-LE tag_count` followed by
+/// `(tag: u16-LE)(len: u16-LE)(value: len bytes)` per field.
+pub fn write_metadata_tlv(meta: &FrameMetadata) -> Vec<u8> {
+    let mut entries: Vec<(u16, Vec<u8>)> = Vec::new();
+
+    if let Some(ref id) = meta.hardware_id {
+        entries.push((TAG_HARDWARE_ID, id.as_bytes().to_vec()));
+    }
+    if let Some(v) = meta.temperature_mk {
+        entries.push((TAG_TEMPERATURE_MK, v.to_le_bytes().to_vec()));
+    }
+    if let Some(v) = meta.cycle_us {
+        entries.push((TAG_CYCLE_US, v.to_le_bytes().to_vec()));
+    }
+    if let Some(v) = meta.decoder_hint {
+        entries.push((TAG_DECODER_HINT, vec![v]));
+    }
+    if let Some(v) = meta.observable_flips {
+        entries.push((TAG_OBSERVABLE_FLIPS, v.to_le_bytes().to_vec()));
+    }
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (tag, val) in &entries {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&(val.len() as u16).to_le_bytes());
+        out.extend_from_slice(val);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// TLV metadata block — parse
+// ---------------------------------------------------------------------------
+
+/// Parse a TLV metadata block from a byte slice, returning a [`FrameMetadata`].
+///
+/// Unknown tags are silently skipped.
+pub fn parse_metadata_tlv(bytes: &[u8]) -> FrameMetadata {
+    let mut meta = FrameMetadata::default();
+    if bytes.len() < 2 {
+        return meta;
+    }
+    let tag_count = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+    let mut cursor = 2;
+    for _ in 0..tag_count {
+        if cursor + 4 > bytes.len() {
+            break;
+        }
+        let tag = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
+        let val_len = u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]) as usize;
+        cursor += 4;
+        if cursor + val_len > bytes.len() {
+            break;
+        }
+        let val = &bytes[cursor..cursor + val_len];
+        match (tag, val_len) {
+            (TAG_HARDWARE_ID, _) => {
+                meta.hardware_id = String::from_utf8(val.to_vec()).ok();
+            }
+            (TAG_TEMPERATURE_MK, 4) => {
+                meta.temperature_mk = Some(f32::from_le_bytes(val.try_into().unwrap()));
+            }
+            (TAG_CYCLE_US, 4) => {
+                meta.cycle_us = Some(f32::from_le_bytes(val.try_into().unwrap()));
+            }
+            (TAG_DECODER_HINT, 1) => {
+                meta.decoder_hint = Some(val[0]);
+            }
+            (TAG_OBSERVABLE_FLIPS, 8) => {
+                meta.observable_flips = Some(u64::from_le_bytes(val.try_into().unwrap()));
+            }
+            _ => {} // unknown or malformed tag — skip
+        }
+        cursor += val_len;
+    }
+    meta
+}
+
+// ---------------------------------------------------------------------------
+// Logical annotation block — write / parse
+// ---------------------------------------------------------------------------
+
+/// Serialise a slice of [`LogicalAnnotation`]s: `u8 count` + `10 bytes each`.
+///
+/// Each annotation is: `logical_id(1) observable_mask(8 LE) frame_basis(1)`.
+pub fn write_annotations(anns: &[LogicalAnnotation]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + anns.len() * 10);
+    out.push(anns.len().min(255) as u8);
+    for a in anns.iter().take(255) {
+        out.push(a.logical_id);
+        out.extend_from_slice(&a.observable_mask.to_le_bytes());
+        out.push(a.frame_basis);
+    }
+    out
+}
+
+/// Parse a logical annotation block from a byte slice.
+pub fn parse_annotations(bytes: &[u8]) -> Vec<LogicalAnnotation> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    let count = bytes[0] as usize;
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let offset = 1 + i * 10;
+        if offset + 10 > bytes.len() {
+            break;
+        }
+        let logical_id = bytes[offset];
+        let observable_mask = u64::from_le_bytes(bytes[offset + 1..offset + 9].try_into().unwrap());
+        let frame_basis = bytes[offset + 9];
+        out.push(LogicalAnnotation {
+            logical_id,
+            observable_mask,
+            frame_basis,
+        });
+    }
+    out
+}
 
 /// Parse a [`FileHeader`] from the front of a byte slice.
 ///
@@ -145,6 +279,82 @@ mod tests {
             parse_file_header(&input),
             Err(StabstreamError::InvalidMagic(_))
         ));
+    }
+
+    #[test]
+    fn metadata_tlv_round_trip() {
+        let meta = FrameMetadata {
+            hardware_id: Some("ibm_sherbrooke".to_string()),
+            temperature_mk: Some(15.3),
+            cycle_us: Some(1.1),
+            decoder_hint: Some(2),
+            observable_flips: Some(0b101),
+        };
+        let bytes = write_metadata_tlv(&meta);
+        let parsed = parse_metadata_tlv(&bytes);
+        assert_eq!(parsed.hardware_id.as_deref(), Some("ibm_sherbrooke"));
+        assert!((parsed.temperature_mk.unwrap() - 15.3).abs() < 1e-5);
+        assert!((parsed.cycle_us.unwrap() - 1.1).abs() < 1e-5);
+        assert_eq!(parsed.decoder_hint, Some(2));
+        assert_eq!(parsed.observable_flips, Some(0b101));
+    }
+
+    #[test]
+    fn metadata_tlv_observable_flips_only() {
+        let meta = FrameMetadata {
+            observable_flips: Some(0xDEADBEEF_CAFEBABE),
+            ..Default::default()
+        };
+        let bytes = write_metadata_tlv(&meta);
+        // 2 (count) + 4 (tag+len) + 8 (u64) = 14 bytes
+        assert_eq!(bytes.len(), 14);
+        let parsed = parse_metadata_tlv(&bytes);
+        assert_eq!(parsed.observable_flips, Some(0xDEADBEEF_CAFEBABE));
+        assert!(parsed.hardware_id.is_none());
+    }
+
+    #[test]
+    fn metadata_tlv_empty() {
+        let meta = FrameMetadata::default();
+        let bytes = write_metadata_tlv(&meta);
+        assert_eq!(bytes, vec![0, 0]); // tag count = 0
+        let parsed = parse_metadata_tlv(&bytes);
+        assert!(parsed.observable_flips.is_none());
+    }
+
+    #[test]
+    fn annotations_round_trip() {
+        let anns = vec![
+            LogicalAnnotation {
+                logical_id: 0,
+                observable_mask: 0b01,
+                frame_basis: 0,
+            },
+            LogicalAnnotation {
+                logical_id: 1,
+                observable_mask: 0b10,
+                frame_basis: 1,
+            },
+        ];
+        let bytes = write_annotations(&anns);
+        // 1 (count) + 2 * 10 = 21 bytes
+        assert_eq!(bytes.len(), 21);
+        let parsed = parse_annotations(&bytes);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].logical_id, 0);
+        assert_eq!(parsed[0].observable_mask, 0b01);
+        assert_eq!(parsed[0].frame_basis, 0);
+        assert_eq!(parsed[1].logical_id, 1);
+        assert_eq!(parsed[1].observable_mask, 0b10);
+        assert_eq!(parsed[1].frame_basis, 1);
+    }
+
+    #[test]
+    fn annotations_empty() {
+        let bytes = write_annotations(&[]);
+        assert_eq!(bytes, vec![0]); // count = 0
+        let parsed = parse_annotations(&bytes);
+        assert!(parsed.is_empty());
     }
 
     #[test]

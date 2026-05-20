@@ -54,11 +54,16 @@ struct ParsedFrame {
 
 /// Parse a raw frame byte slice (header + payload + terminator) into fields.
 ///
-/// Layout (from `StreamPlayer::next_frame_bytes`):
-/// - [0..36]  frame header
-/// - [36..38] de_len: u16 LE — length of detector-events RLE blob
+/// Layout:
+/// - [0..36]  frame header (flags at [30..32]: bit 0=timing, bit 1=parity, bit 2=TLV meta, bit 3=annotations)
+/// - [36..38] de_len: u16 LE
 /// - [38..38+de_len] detector-events RLE
-/// - [38+de_len..] meas_results (ancilla_count bytes), then terminator
+/// - [38+de_len..38+de_len+ancilla] meas_results
+/// - [optional timing: ancilla*2 bytes if flags & 0x01]
+/// - [optional parity: (ancilla+7)/8 bytes if flags & 0x02]
+/// - [optional TLV block if flags & 0x04]
+/// - [optional annotation block if flags & 0x08]
+/// - 2-byte sentinel + 4-byte CRC
 fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
     if bytes.len() < 42 {
         return None;
@@ -68,6 +73,7 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
     let round = u32::from_le_bytes(bytes[8..12].try_into().ok()?);
     let timestamp_ns = u64::from_le_bytes(bytes[12..20].try_into().ok()?);
     let ancilla_count = u16::from_le_bytes(bytes[22..24].try_into().ok()?) as usize;
+    let flags = u16::from_le_bytes(bytes[30..32].try_into().ok()?);
 
     let de_len = u16::from_le_bytes(bytes[36..38].try_into().ok()?) as usize;
     let de_end = 38 + de_len;
@@ -83,6 +89,47 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
         vec![0i8; ancilla_count]
     };
 
+    // Skip optional timing and parity blocks
+    let timing_len = if flags & 0x01 != 0 {
+        ancilla_count * 2
+    } else {
+        0
+    };
+    let parity_len = if flags & 0x02 != 0 {
+        ancilla_count.div_ceil(8)
+    } else {
+        0
+    };
+    let mut cursor = meas_end + timing_len + parity_len;
+
+    // Parse TLV metadata block (flag bit 2) to extract observable_flips
+    let observable_flips = if flags & 0x04 != 0 && cursor + 2 <= bytes.len() {
+        let tag_count = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().ok()?) as usize;
+        cursor += 2;
+        let mut obs = None;
+        for _ in 0..tag_count {
+            if cursor + 4 > bytes.len() {
+                break;
+            }
+            let tag = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().ok()?);
+            let val_len =
+                u16::from_le_bytes(bytes[cursor + 2..cursor + 4].try_into().ok()?) as usize;
+            cursor += 4;
+            if cursor + val_len > bytes.len() {
+                break;
+            }
+            if tag == 0x0010 && val_len == 8 {
+                obs = Some(u64::from_le_bytes(
+                    bytes[cursor..cursor + 8].try_into().ok()?,
+                ));
+            }
+            cursor += val_len;
+        }
+        obs
+    } else {
+        None
+    };
+
     Some(ParsedFrame {
         frame_id,
         round,
@@ -90,7 +137,7 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
         ancilla_count,
         detector_events,
         meas_results,
-        observable_flips: None,
+        observable_flips,
     })
 }
 
@@ -497,6 +544,81 @@ mod tests {
 
         assert_eq!(report.syndrome_weight_histogram[0], 3); // 3 frames with weight 0
         assert_eq!(report.syndrome_weight_histogram[2], 3); // 3 frames with weight 2
+    }
+
+    /// Build a frame with TLV metadata containing observable_flips.
+    fn build_frame_with_obs(
+        frame_id: u64,
+        round: u32,
+        detector_events: &[bool],
+        obs: u64,
+    ) -> Vec<u8> {
+        use stabstream_core::frame::FrameMetadata;
+        use stabstream_deserialize::{parser::write_metadata_tlv, rle::encode_detector_events};
+
+        let ancilla_count = detector_events.len() as u16;
+        let rle = encode_detector_events(detector_events);
+        let meta = FrameMetadata {
+            observable_flips: Some(obs),
+            ..Default::default()
+        };
+        let tlv = write_metadata_tlv(&meta);
+
+        let payload_len = (2 + rle.len() + ancilla_count as usize + tlv.len()) as u32;
+        let flags: u16 = 0x04; // metadata present
+
+        let mut hdr = [0u8; 36];
+        hdr[0..8].copy_from_slice(&frame_id.to_le_bytes());
+        hdr[8..12].copy_from_slice(&round.to_le_bytes());
+        hdr[22..24].copy_from_slice(&ancilla_count.to_le_bytes());
+        hdr[24..28].copy_from_slice(&payload_len.to_le_bytes());
+        hdr[28] = 0x01;
+        hdr[30..32].copy_from_slice(&flags.to_le_bytes());
+        let header_crc = crc32fast::hash(&hdr[0..32]);
+        hdr[32..36].copy_from_slice(&header_crc.to_le_bytes());
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&hdr);
+        out.extend_from_slice(&(rle.len() as u16).to_le_bytes());
+        out.extend_from_slice(&rle);
+        for &e in detector_events {
+            out.push(if e { 0xFF } else { 0x01 });
+        }
+        out.extend_from_slice(&tlv);
+        out.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes()); // frame CRC
+        out
+    }
+
+    #[test]
+    fn observable_flips_extracted_from_tlv() {
+        use std::io::Cursor;
+
+        let window_depth = 3;
+        let n_frames = 10u64;
+        // All odd frames have observable flipped (obs=1), even frames have obs=0.
+        let mut stream = Vec::new();
+        for i in 0..n_frames {
+            let obs = i % 2; // alternating 0 / 1
+            stream.extend_from_slice(&build_frame_with_obs(i, i as u32, &[false; 4], obs));
+        }
+
+        let dec = NullDecoder;
+        let config = AnalysisConfig {
+            window_depth,
+            observable_count: 1,
+        };
+        let mut cursor = Cursor::new(stream);
+        let report = run_analysis(&mut || read_next_frame(&mut cursor), &dec, &config).unwrap();
+
+        assert_eq!(report.frames_processed, n_frames);
+        assert!(
+            report.ground_truth_available,
+            "ground truth should be detected"
+        );
+        // NullDecoder always returns 0 flips; ~50% of shots have obs=1 → p_L ≈ 0.5
+        let p_l = report.logical_error_rates[0];
+        assert!((p_l - 0.5).abs() < 0.15, "expected p_L ≈ 0.5, got {p_l}");
     }
 
     #[test]

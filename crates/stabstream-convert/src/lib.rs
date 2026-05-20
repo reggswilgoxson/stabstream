@@ -4,7 +4,10 @@ use stabstream_core::{
     error::StabstreamError,
     frame::{FileHeader, FrameHeader, SyndromeFrame, QSSF_MAGIC},
 };
-use stabstream_deserialize::{parser::write_frame_header, rle::encode_detector_events};
+use stabstream_deserialize::{
+    parser::{write_annotations, write_frame_header, write_metadata_tlv},
+    rle::encode_detector_events,
+};
 use uuid::Uuid;
 
 /// UUID written into QSSF file headers for Stim-sourced streams.
@@ -51,16 +54,57 @@ impl<W: Write> QssfExporter<W> {
     /// Write a single [`SyndromeFrame`] as QSSF binary.
     ///
     /// The file header is emitted automatically before the first frame.
+    /// Metadata (`frame.metadata`) and annotations (`frame.annotations`) are
+    /// serialised as TLV blocks when present; flag bits 2 and 3 are set
+    /// accordingly and `payload_len` is computed from the actual written bytes.
     pub fn write_frame(&mut self, frame: &SyndromeFrame<'_>) -> Result<(), StabstreamError> {
         if !self.header_written {
             self.write_file_header()?;
         }
 
-        let hdr_bytes = write_frame_header(&frame.header);
+        // Pre-serialise optional blocks so we know their lengths before writing
+        // the header (payload_len must cover all of them).
+        let meta_bytes = frame.metadata.as_ref().map(write_metadata_tlv);
+        let ann_bytes = frame.annotations.as_deref().map(write_annotations);
+
+        let de = frame.payload.detector_events;
+        let ancilla = frame.header.ancilla_count as usize;
+        let timing_present = !frame.payload.timing_offsets.is_empty();
+        let parity_present = !frame.payload.parity_checks.is_empty();
+
+        let mut flags: u16 = 0;
+        if timing_present {
+            flags |= 0x01;
+        }
+        if parity_present {
+            flags |= 0x02;
+        }
+        if meta_bytes.is_some() {
+            flags |= 0x04;
+        }
+        if ann_bytes.is_some() {
+            flags |= 0x08;
+        }
+
+        let timing_len = if timing_present { ancilla * 2 } else { 0 };
+        let parity_len = if parity_present {
+            ancilla.div_ceil(8)
+        } else {
+            0
+        };
+        let meta_len = meta_bytes.as_ref().map_or(0, |b| b.len());
+        let ann_len = ann_bytes.as_ref().map_or(0, |b| b.len());
+        let payload_len = 2 + de.len() + ancilla + timing_len + parity_len + meta_len + ann_len;
+
+        // Build header with correct payload_len and flags.
+        let mut hdr = frame.header.clone();
+        hdr.flags = flags;
+        hdr.payload_len = payload_len as u32;
+        hdr.crc32 = 0; // recomputed by write_frame_header
+        let hdr_bytes = write_frame_header(&hdr);
         self.writer.write_all(&hdr_bytes)?;
 
         // detector_events: 2-byte LE length + RLE bytes
-        let de = frame.payload.detector_events;
         self.writer.write_all(&(de.len() as u16).to_le_bytes())?;
         self.writer.write_all(de)?;
 
@@ -80,6 +124,16 @@ impl<W: Write> QssfExporter<W> {
 
         // parity_checks (if present)
         self.writer.write_all(frame.payload.parity_checks)?;
+
+        // TLV metadata block (if present)
+        if let Some(ref mb) = meta_bytes {
+            self.writer.write_all(mb)?;
+        }
+
+        // Logical annotation block (if present)
+        if let Some(ref ab) = ann_bytes {
+            self.writer.write_all(ab)?;
+        }
 
         // Frame terminator: 0xFFFF sentinel + CRC32 of header bytes
         self.writer.write_all(&0xFFFFu16.to_le_bytes())?;
@@ -349,5 +403,49 @@ mod tests {
         // Check QSSF magic at offset 0 (exporter dropped, borrow released)
         let magic = u32::from_le_bytes(out[0..4].try_into().unwrap());
         assert_eq!(magic, QSSF_MAGIC);
+    }
+
+    #[test]
+    fn qssf_exporter_observable_flips_roundtrip() {
+        use stabstream_core::frame::FrameMetadata;
+        use stabstream_deserialize::parser::parse_metadata_tlv;
+
+        // Build a frame with observable_flips = 0b11 (observables 0 and 1 flipped).
+        let input = b"0101\n1010\n";
+        let mut imp = StimImporter::new(Cursor::new(&input[..]));
+        let schema_id: Uuid = STIM_GENERIC_UUID.parse().unwrap();
+        let mut out = Vec::new();
+        {
+            let mut exp = QssfExporter::new(&mut out, schema_id);
+            while let Some(mut frame) = imp.next_frame().unwrap() {
+                frame.observable_flips = Some(0b11);
+                export_owned_frame(&mut exp, &frame).unwrap();
+            }
+            exp.flush().unwrap();
+        }
+
+        // Locate the TLV block in the first frame.
+        // File header: 26 bytes. Then frame header: 36 bytes.
+        // payload_len at [24..28] of the frame header.
+        let fhdr_start = 26;
+        let payload_len =
+            u32::from_le_bytes(out[fhdr_start + 24..fhdr_start + 28].try_into().unwrap()) as usize;
+
+        // Flags byte at [30..32]: bit 2 should be set.
+        let flags = u16::from_le_bytes(out[fhdr_start + 30..fhdr_start + 32].try_into().unwrap());
+        assert_eq!(flags & 0x04, 0x04, "metadata flag bit should be set");
+
+        // The block starting at file_hdr(26) + frame_hdr(36) + de_len_field(2) + de + ancilla
+        // contains the TLV. We read all payload bytes and find the TLV at the end.
+        let payload_start = fhdr_start + 36;
+        let payload_bytes = &out[payload_start..payload_start + payload_len];
+
+        // de_len at [0..2], then de_len bytes of RLE, then 4 bytes meas
+        let de_len = u16::from_le_bytes(payload_bytes[0..2].try_into().unwrap()) as usize;
+        let ancilla = 4usize;
+        let tlv_offset = 2 + de_len + ancilla; // no timing, no parity
+        let tlv_bytes = &payload_bytes[tlv_offset..];
+        let meta = parse_metadata_tlv(tlv_bytes);
+        assert_eq!(meta.observable_flips, Some(0b11));
     }
 }
