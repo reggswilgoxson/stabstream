@@ -33,7 +33,7 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     dem: Option<PathBuf>,
 
-    /// Decoder to use: "union-find" (default) or "null"
+    /// Decoder to use: "union-find" (default), "mwpm" (requires --features mwpm), or "null"
     #[arg(long, default_value = "union-find")]
     decoder: String,
 
@@ -81,7 +81,30 @@ fn main() -> Result<()> {
             analyze_file(&args.input, &dec, config)
                 .with_context(|| format!("analyzing {:?}", args.input))?
         }
-        other => anyhow::bail!("unknown decoder '{}' — use 'union-find' or 'null'", other),
+        #[cfg(feature = "mwpm")]
+        "mwpm" | "fusion-blossom" => {
+            let dem_path = args
+                .dem
+                .as_ref()
+                .with_context(|| "mwpm decoder requires --dem <model.dem>")?;
+            let dem_text = std::fs::read_to_string(dem_path)
+                .with_context(|| format!("reading DEM {:?}", dem_path))?;
+            let dem = DetectorErrorModel::parse(&dem_text).with_context(|| "parsing DEM")?;
+            let graph = Arc::new(SpacetimeGraph::from_dem(&dem));
+            let dec = stabstream_decoder::mwpm::FusionBlossomDecoder::new(Arc::clone(&graph));
+            analyze_file(&args.input, &dec, config)
+                .with_context(|| format!("analyzing {:?}", args.input))?
+        }
+        #[cfg(not(feature = "mwpm"))]
+        "mwpm" | "fusion-blossom" => {
+            anyhow::bail!(
+                "mwpm decoder requires the 'mwpm' feature — rebuild with `--features mwpm`"
+            )
+        }
+        other => anyhow::bail!(
+            "unknown decoder '{}' — use 'union-find', 'mwpm', or 'null'",
+            other
+        ),
     };
 
     let json = serde_json::to_string_pretty(&report).context("serializing report to JSON")?;

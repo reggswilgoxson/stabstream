@@ -12,6 +12,9 @@ description  = "QEC threshold benchmarking suite — sweep (d, p) parameter spac
 name = "stabstream-threshold"
 path = "src/main.rs"
 
+[features]
+mwpm = ["stabstream-decoder/mwpm"]
+
 [dependencies]
 stabstream-core        = { path = "../stabstream-core" }
 stabstream-dem         = { path = "../stabstream-dem" }

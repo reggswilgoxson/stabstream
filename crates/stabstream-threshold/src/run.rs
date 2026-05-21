@@ -37,7 +37,7 @@ pub struct RunArgs {
     #[arg(long = "p-physical", value_name = "P")]
     pub p_physical_overrides: Vec<f64>,
 
-    /// Decoder backend.
+    /// Decoder backend: union-find (default), mwpm (requires --features mwpm), null.
     #[arg(long, value_enum, default_value = "union-find")]
     pub decoder: DecoderKind,
 
@@ -69,6 +69,8 @@ pub struct RunArgs {
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum DecoderKind {
     UnionFind,
+    #[cfg(feature = "mwpm")]
+    Mwpm,
     Null,
 }
 
@@ -76,6 +78,8 @@ impl std::fmt::Display for DecoderKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DecoderKind::UnionFind => write!(f, "union-find"),
+            #[cfg(feature = "mwpm")]
+            DecoderKind::Mwpm => write!(f, "mwpm"),
             DecoderKind::Null => write!(f, "null"),
         }
     }
@@ -87,6 +91,8 @@ impl std::fmt::Display for DecoderKind {
 
 enum AnyDecoder {
     UnionFind(UnionFindDecoder),
+    #[cfg(feature = "mwpm")]
+    Mwpm(stabstream_decoder::mwpm::FusionBlossomDecoder),
     Null,
 }
 
@@ -94,6 +100,8 @@ impl AnyDecoder {
     fn decode_window(&self, window: &SyndromeWindow) -> DecoderResult {
         match self {
             AnyDecoder::UnionFind(d) => d.decode_window(window),
+            #[cfg(feature = "mwpm")]
+            AnyDecoder::Mwpm(d) => d.decode_window(window),
             AnyDecoder::Null => DecoderResult::empty(),
         }
     }
@@ -185,6 +193,10 @@ pub fn run(args: RunArgs) -> Result<()> {
                         DecoderKind::UnionFind => {
                             AnyDecoder::UnionFind(UnionFindDecoder::new(Arc::clone(&graph)))
                         }
+                        #[cfg(feature = "mwpm")]
+                        DecoderKind::Mwpm => AnyDecoder::Mwpm(
+                            stabstream_decoder::mwpm::FusionBlossomDecoder::new(Arc::clone(&graph)),
+                        ),
                         DecoderKind::Null => AnyDecoder::Null,
                     };
                     (rng, dec)

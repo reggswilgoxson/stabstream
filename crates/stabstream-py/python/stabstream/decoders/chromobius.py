@@ -81,7 +81,7 @@ class ChromobiusDecoder:
 
         self._decoder = _chromobius.compile_decoder_for_circuit(circuit)
 
-    def decode(self, matrix: np.ndarray) -> dict:
+    def decode(self, matrix: np.ndarray):
         """
         Decode a single syndrome window.
 
@@ -92,15 +92,17 @@ class ChromobiusDecoder:
 
         Returns
         -------
-        dict
-            ``{"observable_flips": int, "confidence": float}``
+        stabstream.DecoderResult
+            Compatible with ``LogicalErrorAccumulator.record()``.
         """
+        from stabstream import DecoderResult
+
         flat = matrix.ravel().astype(np.bool_)
         prediction = self._decoder.decode(flat)
         obs_bitmask = int(sum(int(b) << i for i, b in enumerate(prediction)))
-        return {"observable_flips": obs_bitmask, "confidence": 1.0}
+        return DecoderResult(obs_bitmask, 1.0)
 
-    def decode_batch(self, matrices: np.ndarray) -> list[dict]:
+    def decode_batch(self, matrices: np.ndarray) -> list:
         """
         Decode a batch of syndrome windows.
 
@@ -112,8 +114,7 @@ class ChromobiusDecoder:
 
         Returns
         -------
-        list[dict]
-            One dict per shot: ``{"observable_flips": int, "confidence": float}``.
+        list[stabstream.DecoderResult]
         """
         shots = matrices.shape[0]
         flat = matrices.reshape(shots, -1).astype(np.bool_)

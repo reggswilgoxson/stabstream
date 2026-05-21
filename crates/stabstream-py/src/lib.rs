@@ -142,6 +142,28 @@ pub struct PyDecoderResult {
 
 #[pymethods]
 impl PyDecoderResult {
+    /// Construct a ``DecoderResult`` directly from an observable-flip bitmask.
+    ///
+    /// This is the canonical way to bridge Python decoder adapters
+    /// (PyMatchingDecoder, ChromobiusDecoder, TesseractDecoder — which return
+    /// plain dicts) into the stabstream ``LogicalErrorAccumulator``.
+    ///
+    /// Parameters
+    /// ----------
+    /// observable_flips : int
+    ///     Bitmask of predicted logical observable flips.
+    /// confidence : float, optional
+    ///     Decoder confidence in [0, 1]. Hard-decision decoders use 1.0 (default).
+    #[new]
+    #[pyo3(signature = (observable_flips, confidence=1.0))]
+    pub fn new(observable_flips: u64, confidence: f64) -> Self {
+        Self {
+            corrections: Vec::new(),
+            confidence,
+            observable_flips,
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "DecoderResult(corrections={}, confidence={:.4}, observable_flips={:#b})",
