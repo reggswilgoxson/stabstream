@@ -80,7 +80,7 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
     if de_end > bytes.len() {
         return None;
     }
-    let detector_events = decode_rle(&bytes[38..de_end], ancilla_count);
+    let detector_events = OwnedSyndromeData::decode_rle(&bytes[38..de_end], ancilla_count);
 
     let meas_end = de_end + ancilla_count;
     let meas_results: Vec<i8> = if meas_end <= bytes.len() {
@@ -141,27 +141,6 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
     })
 }
 
-/// QSSF RLE decoder: token bit 7 = mode (0=zeros / 1=ones), bits 0–6 = run len.
-fn decode_rle(rle: &[u8], ancilla_count: usize) -> Vec<bool> {
-    let mut out = Vec::with_capacity(ancilla_count);
-    for &tok in rle {
-        let mode = (tok & 0x80) != 0;
-        let run = (tok & 0x7F) as usize;
-        for _ in 0..run {
-            out.push(mode);
-        }
-    }
-    // A stream that decodes fewer events than ancilla_count may be truncated/corrupt.
-    // Overflow (more events than expected) is silently truncated below.
-    debug_assert!(
-        out.len() >= ancilla_count,
-        "RLE decoded only {} events but ancilla_count is {} — stream may be truncated",
-        out.len(),
-        ancilla_count
-    );
-    out.resize(ancilla_count, false);
-    out
-}
 
 /// Read the next raw frame from a plain byte stream (no file header already consumed).
 ///
@@ -175,11 +154,10 @@ fn read_next_frame<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>, Stabstrea
     }
     let payload_len = u32::from_le_bytes(hdr[24..28].try_into().unwrap()) as usize;
     let remainder = payload_len + 6;
-    let mut rest = vec![0u8; remainder];
-    reader.read_exact(&mut rest).map_err(StabstreamError::Io)?;
     let mut out = Vec::with_capacity(36 + remainder);
     out.extend_from_slice(&hdr);
-    out.extend_from_slice(&rest);
+    out.resize(36 + remainder, 0);
+    reader.read_exact(&mut out[36..]).map_err(StabstreamError::Io)?;
     Ok(Some(out))
 }
 
@@ -386,13 +364,13 @@ mod tests {
     fn decode_rle_basic() {
         // 0x82 = mode 1 (ones), run 2 → [true, true]
         // 0x02 = mode 0 (zeros), run 2 → [false, false]
-        let out = decode_rle(&[0x82, 0x02], 4);
+        let out = OwnedSyndromeData::decode_rle(&[0x82, 0x02], 4);
         assert_eq!(out, vec![true, true, false, false]);
     }
 
     #[test]
     fn decode_rle_truncates_to_ancilla_count() {
-        let out = decode_rle(&[0x85], 3); // 5 ones, capped to 3
+        let out = OwnedSyndromeData::decode_rle(&[0x85], 3); // 5 ones, capped to 3
         assert_eq!(out.len(), 3);
         assert!(out.iter().all(|&v| v));
     }

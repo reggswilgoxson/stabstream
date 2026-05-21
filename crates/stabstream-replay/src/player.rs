@@ -36,14 +36,12 @@ impl<R: Read> StreamPlayer<R> {
 
         // 2-byte de_len prefix + payload body + 6-byte terminator
         let remainder = payload_len + 6;
-        let mut rest = vec![0u8; remainder];
-        self.decoder
-            .read_exact(&mut rest)
-            .map_err(StabstreamError::Io)?;
-
         let mut out = Vec::with_capacity(36 + remainder);
         out.extend_from_slice(&hdr_buf);
-        out.extend_from_slice(&rest);
+        out.resize(36 + remainder, 0);
+        self.decoder
+            .read_exact(&mut out[36..])
+            .map_err(StabstreamError::Io)?;
 
         self.frames_read += 1;
         Ok(Some(out))
