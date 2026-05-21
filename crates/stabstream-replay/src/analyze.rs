@@ -141,7 +141,6 @@ fn parse_raw_frame(bytes: &[u8]) -> Option<ParsedFrame> {
     })
 }
 
-
 /// Read the next raw frame from a plain byte stream (no file header already consumed).
 ///
 /// Same logic as `StreamPlayer::next_frame_bytes` but for a plain `Read`.
@@ -157,7 +156,9 @@ fn read_next_frame<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>, Stabstrea
     let mut out = Vec::with_capacity(36 + remainder);
     out.extend_from_slice(&hdr);
     out.resize(36 + remainder, 0);
-    reader.read_exact(&mut out[36..]).map_err(StabstreamError::Io)?;
+    reader
+        .read_exact(&mut out[36..])
+        .map_err(StabstreamError::Io)?;
     Ok(Some(out))
 }
 
