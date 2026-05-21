@@ -366,8 +366,11 @@ let report = acc.report();
 println!("{}", report.summary());
 ```
 
-The `Histogram` type provides power-of-2 bucket histograms for decode latency
-and syndrome weight distributions.
+The `Histogram` type provides power-of-2 bucket histograms for custom
+decode latency and syndrome weight tracking in user-built pipelines.
+`AnalysisReport` (produced by `stabstream-analyze` and `StreamPlayer::analyze`)
+reports latency as percentiles (p50/p99/max) and syndrome weights as a
+direct-index frequency vector, both serialized to JSON.
 
 ---
 

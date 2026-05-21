@@ -12,6 +12,9 @@ description  = "CLI tool for offline QEC decoding analysis of QSSF recordings"
 name = "stabstream-analyze"
 path = "src/main.rs"
 
+[features]
+mwpm = ["stabstream-decoder/mwpm"]
+
 [dependencies]
 stabstream-core    = { path = "../stabstream-core" }
 stabstream-dem     = { path = "../stabstream-dem" }

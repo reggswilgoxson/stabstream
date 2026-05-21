@@ -9,7 +9,7 @@ rust-version.workspace = true
 description  = "ratatui TUI for live stabstream syndrome monitoring"
 
 [[bin]]
-name = "stabstream"
+name = "stabstream-dashboard"
 path = "src/main.rs"
 
 [dependencies]

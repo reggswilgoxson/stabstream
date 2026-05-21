@@ -88,7 +88,7 @@ class TesseractDecoder:
                     "the path to the tesseract binary via the 'binary' argument."
                 )
 
-    def decode(self, matrix: np.ndarray) -> dict:
+    def decode(self, matrix: np.ndarray):
         """
         Decode a single syndrome window.
 
@@ -99,8 +99,8 @@ class TesseractDecoder:
 
         Returns
         -------
-        dict
-            ``{"observable_flips": int, "confidence": float}``
+        stabstream.DecoderResult
+            Compatible with ``LogicalErrorAccumulator.record()``.
         """
         flat = matrix.ravel().astype(np.bool_)
 
@@ -108,7 +108,7 @@ class TesseractDecoder:
             return self._decode_package(flat)
         return self._decode_subprocess(flat.reshape(1, -1))[0]
 
-    def decode_batch(self, matrices: np.ndarray) -> list[dict]:
+    def decode_batch(self, matrices: np.ndarray) -> list:
         """
         Decode a batch of syndrome windows.
 
@@ -120,7 +120,7 @@ class TesseractDecoder:
 
         Returns
         -------
-        list[dict]
+        list[stabstream.DecoderResult]
         """
         shots = matrices.shape[0]
         flat = matrices.reshape(shots, -1).astype(np.bool_)
@@ -133,17 +133,18 @@ class TesseractDecoder:
     # Internal dispatch
     # ------------------------------------------------------------------
 
-    def _decode_package(self, flat: np.ndarray) -> dict:
+    def _decode_package(self, flat: np.ndarray):
+        from stabstream import DecoderResult
+
         result = self._decoder.decode(flat)
         obs = getattr(result, "observable_flips", None)
         if obs is None:
-            # Fallback: result might be an array
             obs = int(sum(int(b) << i for i, b in enumerate(result)))
         else:
             obs = int(obs)
-        return {"observable_flips": obs, "confidence": 1.0}
+        return DecoderResult(obs, 1.0)
 
-    def _decode_subprocess(self, flat: np.ndarray) -> list[dict]:
+    def _decode_subprocess(self, flat: np.ndarray) -> list:
         """
         Invoke the Tesseract binary with detection events written as a
         bit-packed binary file, parse the JSON output.
@@ -188,9 +189,10 @@ class TesseractDecoder:
 
             raw = json.loads(obs_path.read_text())
 
-        # raw is expected to be a list of observable flip lists
+        from stabstream import DecoderResult
+
         results = []
         for obs_list in raw:
             obs_bitmask = int(sum(int(b) << i for i, b in enumerate(obs_list)))
-            results.append({"observable_flips": obs_bitmask, "confidence": 1.0})
+            results.append(DecoderResult(obs_bitmask, 1.0))
         return results

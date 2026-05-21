@@ -69,7 +69,7 @@ class PyMatchingDecoder:
         self._matching: pymatching.Matching = dem.to_pymatching()
         self._observable_count: int = dem.observable_count
 
-    def decode(self, matrix: np.ndarray) -> dict:
+    def decode(self, matrix: np.ndarray):
         """
         Decode a single syndrome window.
 
@@ -80,14 +80,16 @@ class PyMatchingDecoder:
 
         Returns
         -------
-        dict
-            ``{"observable_flips": int, "confidence": float}``
+        stabstream.DecoderResult
+            Compatible with ``LogicalErrorAccumulator.record()``.
         """
+        from stabstream import DecoderResult
+
         flat = matrix.ravel().astype(np.uint8)
         prediction = self._matching.decode(flat)
-        return {"observable_flips": _prediction_to_bitmask(prediction), "confidence": 1.0}
+        return DecoderResult(_prediction_to_bitmask(prediction), 1.0)
 
-    def decode_batch(self, matrices: np.ndarray) -> list[dict]:
+    def decode_batch(self, matrices: np.ndarray) -> list:
         """
         Decode a batch of syndrome windows using PyMatching's vectorised path.
 
@@ -99,12 +101,10 @@ class PyMatchingDecoder:
 
         Returns
         -------
-        list[dict]
-            One dict per shot: ``{"observable_flips": int, "confidence": float}``.
+        list[stabstream.DecoderResult]
         """
+        from stabstream import DecoderResult
+
         flat = matrices.reshape(matrices.shape[0], -1).astype(np.uint8)
         predictions = self._matching.decode_batch(flat)
-        return [
-            {"observable_flips": _prediction_to_bitmask(pred), "confidence": 1.0}
-            for pred in predictions
-        ]
+        return [DecoderResult(_prediction_to_bitmask(pred), 1.0) for pred in predictions]
