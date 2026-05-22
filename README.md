@@ -19,6 +19,10 @@ in O(n·α(n)) time, and accumulates logical error rates — all without leaving
 The Python bindings expose zero-copy NumPy arrays and a `DetectorErrorModel.to_pymatching()`
 bridge for MWPM decoding via PyMatching.
 
+> **New to stabstream or QEC?** See [ARCHITECTURE.md](ARCHITECTURE.md) for an
+> annotated pipeline diagram, component map, and frame anatomy — designed for
+> researchers coming from quantum computing rather than systems programming.
+
 ---
 
 ## Workspace Crates
