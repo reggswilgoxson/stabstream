@@ -43,8 +43,7 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
                         .iter()
                         .map(|&v| v as u8)
                         .collect();
-                    let observable_flips =
-                        frame.metadata.as_ref().and_then(|m| m.observable_flips);
+                    let observable_flips = frame.metadata.as_ref().and_then(|m| m.observable_flips);
                     Ok(Some(OwnedFrame {
                         frame_id: frame.header.frame_id,
                         round: frame.header.round,

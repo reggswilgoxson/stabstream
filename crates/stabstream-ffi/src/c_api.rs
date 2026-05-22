@@ -376,7 +376,9 @@ mod tests {
 
         // Read back via Rust consumer.
         let mut consumer = ShmConsumer::open(name).expect("consumer open failed");
-        let frame = consumer.read_frame_blocking().expect("read_frame_blocking failed");
+        let frame = consumer
+            .read_frame_blocking()
+            .expect("read_frame_blocking failed");
         assert_eq!(&frame, payload);
 
         unsafe { stabstream_shm_close(prod) };

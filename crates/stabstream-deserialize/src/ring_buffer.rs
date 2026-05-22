@@ -177,7 +177,10 @@ mod tests {
         let mut scratch = Vec::new();
         let result = rb.peek_wrapped(5, &mut scratch);
         assert_eq!(result, Some([10u8, 20, 30, 40, 50].as_slice()));
-        assert!(scratch.is_empty(), "scratch must not be written for non-wrapping peek");
+        assert!(
+            scratch.is_empty(),
+            "scratch must not be written for non-wrapping peek"
+        );
     }
 
     #[test]

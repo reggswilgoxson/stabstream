@@ -227,8 +227,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
                     declared: timing_len as u32,
                     actual: self.ring_buf.available_read(),
                 })?;
-            let slice =
-                unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), ancilla) };
+            let slice = unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), ancilla) };
             self.ring_buf.consume(timing_len);
             slice
         } else {
