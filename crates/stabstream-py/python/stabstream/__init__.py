@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     # Pure-Python submodules (vendors, io) remain importable.
     __version__ = "0.1.0-dev"
 
-from stabstream.io import load_qssf, read_qssf  # noqa: F401
+from stabstream.io import load_qssf, read_qssf, load_qssf_windows, load_dataset  # noqa: F401
 
 __all__ = [
     # Rust classes
@@ -47,5 +47,7 @@ __all__ = [
     # Pure-Python utilities
     "load_qssf",
     "read_qssf",
+    "load_qssf_windows",
+    "load_dataset",
     "__version__",
 ]

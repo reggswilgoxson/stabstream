@@ -297,6 +297,8 @@ class LogicalErrorAccumulator:
 # Pure-Python utilities (from stabstream.io)
 # ---------------------------------------------------------------------------
 
+from typing import Generator, Union
+
 def load_qssf(path: str) -> Iterator[SyndromeFrame]:
     """
     Generator of SyndromeFrame objects from a QSSF file or TCP URI.
@@ -317,5 +319,52 @@ def read_qssf(
     Load a QSSF file into a pandas DataFrame (requires ``pip install pandas``).
 
     Each row is one frame. ``detector_events`` column holds a NumPy bool array.
+    """
+    ...
+
+def load_qssf_windows(
+    path: str,
+    window_depth: int,
+    batch_size: int = 256,
+    *,
+    with_labels: bool = False,
+) -> Generator[
+    Union[
+        npt.NDArray[np.bool_],
+        tuple[npt.NDArray[np.bool_], npt.NDArray[np.uint64]],
+    ],
+    None,
+    None,
+]:
+    """
+    Yield batches of multi-round syndrome windows for ML training/inference.
+
+    Parameters
+    ----------
+    path:
+        Filesystem path or TCP URI.
+    window_depth:
+        Number of rounds per window.
+    batch_size:
+        Windows per batch.
+    with_labels:
+        If True, yield ``(X, y)`` where ``y`` is a ``(batch_size,)``
+        uint64 observable-flip bitmask from QSSF tag 0x10.
+
+    Yields
+    ------
+    X : ndarray, shape ``(n, window_depth, ancilla_count)``, dtype bool
+    y : ndarray, shape ``(n,)``, dtype uint64 — only when with_labels=True
+    """
+    ...
+
+def load_dataset(path: str) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.uint64]]:
+    """
+    Load an ML training dataset written by ``stabstream-convert dem-to-dataset``.
+
+    Returns
+    -------
+    X : ndarray, shape ``(shots, detector_count)``, dtype bool
+    y : ndarray, shape ``(shots,)``, dtype uint64 (observable flip bitmasks)
     """
     ...

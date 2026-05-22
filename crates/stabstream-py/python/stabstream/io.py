@@ -170,3 +170,191 @@ def load_qssf_batch(
 
     if buf:
         yield np.stack(buf)
+
+
+def load_qssf_windows(
+    path: str,
+    window_depth: int,
+    batch_size: int = 256,
+    *,
+    with_labels: bool = False,
+) -> "Generator[np.ndarray | tuple[np.ndarray, np.ndarray], None, None]":
+    """
+    Yield batches of multi-round syndrome windows for ML training/inference.
+
+    Each batch is a NumPy array of shape
+    ``(batch_size, window_depth, ancilla_count)`` with dtype ``bool``.
+    Frames with a mismatched ``ancilla_count`` are silently dropped.
+
+    Parameters
+    ----------
+    path:
+        Filesystem path or TCP URI accepted by ``load_qssf``.
+    window_depth:
+        Number of rounds per window (temporal depth).  Equivalent to the
+        ``window_depth`` argument of ``stabstream.SyndromeWindow``.
+    batch_size:
+        Number of windows per yielded array.  The final batch may be
+        smaller.
+    with_labels:
+        If True, yield ``(X, y)`` tuples where ``y`` is a
+        ``(batch_size,)`` uint64 array of observable flip bitmasks read
+        from QSSF metadata tag 0x10.  Frames without ground truth
+        contribute ``y=0``.
+
+    Yields
+    ------
+    np.ndarray or tuple[np.ndarray, np.ndarray]
+        ``X`` has shape ``(n, window_depth, ancilla_count)``, dtype bool.
+        ``y`` (only when ``with_labels=True``) has shape ``(n,)``,
+        dtype uint64.
+
+    Examples
+    --------
+    Training loop::
+
+        from stabstream.io import load_qssf_windows
+        for X, y in load_qssf_windows("data.qssf", window_depth=5,
+                                       batch_size=512, with_labels=True):
+            # X.shape == (512, 5, 24)  — (batch, rounds, ancillas)
+            # y.shape == (512,)        — observable flip bitmasks
+            loss = model.train_step(X, y)
+
+    Inference::
+
+        for X in load_qssf_windows("live.qssf", window_depth=5):
+            predictions = model(X)
+    """
+    import collections
+
+    anchor_ancillas: Optional[int] = None
+    ring: "collections.deque[np.ndarray]" = collections.deque()
+    label_ring: "collections.deque[int]" = collections.deque()
+
+    x_buf: list[np.ndarray] = []
+    y_buf: list[int] = []
+
+    for frame in load_qssf(path):
+        ac = frame.ancilla_count
+        if anchor_ancillas is None:
+            anchor_ancillas = ac
+        if ac != anchor_ancillas:
+            continue
+
+        row = frame.to_numpy_detector_events()
+        label = int(frame.observable_flips or 0)
+
+        ring.append(row)
+        label_ring.append(label)
+
+        if len(ring) > window_depth:
+            ring.popleft()
+            label_ring.popleft()
+
+        if len(ring) == window_depth:
+            x_buf.append(np.stack(list(ring)))  # (window_depth, ancillas)
+            y_buf.append(label_ring[-1])
+
+            if len(x_buf) == batch_size:
+                X = np.stack(x_buf)
+                if with_labels:
+                    yield X, np.array(y_buf, dtype=np.uint64)
+                else:
+                    yield X
+                x_buf = []
+                y_buf = []
+
+    if x_buf:
+        X = np.stack(x_buf)
+        if with_labels:
+            yield X, np.array(y_buf, dtype=np.uint64)
+        else:
+            yield X
+
+
+# ---------------------------------------------------------------------------
+# ML training dataset I/O
+# ---------------------------------------------------------------------------
+
+_DATASET_MAGIC = b"SSDS"  # StabStream DataSet
+_DATASET_VERSION = 1
+
+
+def load_dataset(
+    path: str,
+) -> "tuple[np.ndarray, np.ndarray]":
+    """
+    Load an ML training dataset written by ``stabstream-convert dem-to-dataset``.
+
+    The file uses a compact binary layout::
+
+        magic (4 bytes): b"SSDS"
+        version (u8): 1
+        shots (u64 LE)
+        detector_count (u32 LE)
+        observable_count (u32 LE)
+        X: uint8 array, shape (shots, detector_count), row-major
+        y: uint64 array, shape (shots,), LE
+
+    Parameters
+    ----------
+    path:
+        Path to a ``.bin`` dataset file produced by
+        ``stabstream-convert dem-to-dataset``.
+
+    Returns
+    -------
+    X : np.ndarray
+        Shape ``(shots, detector_count)``, dtype ``bool``.  1 = detector
+        fired, 0 = no event.
+    y : np.ndarray
+        Shape ``(shots,)``, dtype ``uint64``.  Each value is a bitmask of
+        observable flip ground truth (bit i = 1 if observable i flipped).
+
+    Examples
+    --------
+    ::
+
+        from stabstream.io import load_dataset
+        X, y = load_dataset("training_data.bin")
+        # X.shape == (100000, 24) for d=5 surface code
+        # y.shape == (100000,)
+    """
+    import struct
+
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    if len(raw) < 14:
+        raise ValueError(f"dataset file too short: {len(raw)} bytes")
+
+    if raw[:4] != _DATASET_MAGIC:
+        raise ValueError(
+            f"invalid dataset magic: {raw[:4]!r} (expected {_DATASET_MAGIC!r})"
+        )
+    if raw[4] != _DATASET_VERSION:
+        raise ValueError(
+            f"unsupported dataset version {raw[4]} (expected {_DATASET_VERSION})"
+        )
+
+    offset = 5
+    shots, det, obs = struct.unpack_from("<QII", raw, offset)
+    offset += 16  # 8 + 4 + 4
+
+    x_size = shots * det
+    y_size = shots * 8
+
+    if len(raw) < offset + x_size + y_size:
+        raise ValueError(
+            f"dataset file truncated: expected {offset + x_size + y_size} bytes, "
+            f"got {len(raw)}"
+        )
+
+    X = np.frombuffer(raw, dtype=np.uint8, count=x_size, offset=offset).reshape(
+        shots, det
+    ).astype(bool)
+    offset += x_size
+
+    y = np.frombuffer(raw, dtype="<u8", count=shots, offset=offset)
+
+    return X, y
