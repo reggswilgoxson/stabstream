@@ -19,6 +19,7 @@ python  = ["dep:pyo3"]
 stabstream-core        = { path = "../stabstream-core" }
 stabstream-deserialize = { path = "../stabstream-deserialize" }
 stabstream-decoder     = { path = "../stabstream-decoder" }
+stabstream-dem         = { path = "../stabstream-dem" }
 stabstream-validate    = { path = "../stabstream-validate" }
 stabstream-sim         = { path = "../stabstream-sim" }
 tokio.workspace        = true
