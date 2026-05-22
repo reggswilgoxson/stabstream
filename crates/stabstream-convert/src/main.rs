@@ -269,15 +269,15 @@ fn run_dem_to_dataset(args: DemToDatasetArgs) -> Result<()> {
     }
 
     // Write SSDS binary format.
-    let mut out = File::create(&args.output)
-        .with_context(|| format!("cannot create '{}'", args.output))?;
+    let mut out =
+        File::create(&args.output).with_context(|| format!("cannot create '{}'", args.output))?;
 
-    out.write_all(b"SSDS")?;                              // magic
-    out.write_all(&[1u8])?;                               // version
-    out.write_all(&(shots as u64).to_le_bytes())?;        // shots
-    out.write_all(&(det as u32).to_le_bytes())?;          // detector_count
-    out.write_all(&(obs as u32).to_le_bytes())?;          // observable_count
-    out.write_all(&x_buf)?;                               // X (uint8)
+    out.write_all(b"SSDS")?; // magic
+    out.write_all(&[1u8])?; // version
+    out.write_all(&(shots as u64).to_le_bytes())?; // shots
+    out.write_all(&(det as u32).to_le_bytes())?; // detector_count
+    out.write_all(&(obs as u32).to_le_bytes())?; // observable_count
+    out.write_all(&x_buf)?; // X (uint8)
     for &y in &y_buf {
         out.write_all(&y.to_le_bytes())?;
     }
