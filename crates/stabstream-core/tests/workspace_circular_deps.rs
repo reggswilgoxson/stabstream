@@ -49,10 +49,7 @@ fn parse_cargo_toml(path: &Path) -> (String, Vec<PathBuf>) {
 
         // Section headers: single [foo] not [[foo]].
         if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
-            let header = trimmed
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim();
+            let header = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
             section = classify_section(header);
             continue;
         }
@@ -110,7 +107,11 @@ fn find_workspace_root(start: &Path) -> PathBuf {
                 return dir;
             }
         }
-        assert!(dir.pop(), "workspace root not found above {}", start.display());
+        assert!(
+            dir.pop(),
+            "workspace root not found above {}",
+            start.display()
+        );
     }
 }
 
@@ -211,7 +212,10 @@ fn dfs_clean_dag() {
     let graph: HashMap<String, Vec<String>> = [
         ("core".to_string(), vec![]),
         ("dem".to_string(), vec!["core".to_string()]),
-        ("sim".to_string(), vec!["core".to_string(), "dem".to_string()]),
+        (
+            "sim".to_string(),
+            vec!["core".to_string(), "dem".to_string()],
+        ),
     ]
     .into_iter()
     .collect();
