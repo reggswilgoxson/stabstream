@@ -45,6 +45,8 @@ bridge for MWPM decoding via PyMatching.
 
 ## Quick Start
 
+> **New to stabstream?** See the [Quickstart guide](QUICKSTART.md) for a step-by-step walkthrough from zero to live syndrome analysis in 5 commands.
+
 ```bash
 # Build the workspace
 cargo build --workspace
