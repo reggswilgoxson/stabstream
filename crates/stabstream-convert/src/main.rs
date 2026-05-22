@@ -1,12 +1,15 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use rand::rngs::SmallRng;
+use rand::{RngCore, SeedableRng};
 use stabstream_convert::{
     export_owned_frame, QssfExporter, StimImporter, StimWithObsImporter, STIM_GENERIC_UUID,
 };
+use stabstream_dem::parser::DetectorErrorModel;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -33,6 +36,8 @@ enum Commands {
     StimToQssf(StimToQssfArgs),
     /// Convert a pre-generated Stim 01 detector-events file to QSSF.
     FromFile(FromFileArgs),
+    /// Sample shots directly from a DEM and write an ML training dataset.
+    DemToDataset(DemToDatasetArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -75,11 +80,31 @@ pub struct FromFileArgs {
     schema_id: String,
 }
 
+#[derive(Parser, Debug)]
+pub struct DemToDatasetArgs {
+    /// Stim Detector Error Model file (.dem).
+    #[arg(long)]
+    dem: String,
+
+    /// Number of syndrome shots to sample.
+    #[arg(long, default_value_t = 100_000)]
+    shots: u64,
+
+    /// Output dataset file path (SSDS binary format, readable by stabstream.io.load_dataset).
+    #[arg(long = "out", short = 'o')]
+    output: String,
+
+    /// Random seed (omit for entropy-seeded sampling).
+    #[arg(long)]
+    seed: Option<u64>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::StimToQssf(args) => run_stim_to_qssf(args),
         Commands::FromFile(args) => run_from_file(args),
+        Commands::DemToDataset(args) => run_dem_to_dataset(args),
     }
 }
 
@@ -199,6 +224,114 @@ fn run_from_file(args: FromFileArgs) -> Result<()> {
     exporter.flush()?;
     eprintln!("Converted {count} frames → {}", args.output);
     Ok(())
+}
+
+// ─── dem-to-dataset ──────────────────────────────────────────────────────────
+
+fn run_dem_to_dataset(args: DemToDatasetArgs) -> Result<()> {
+    let dem_text = std::fs::read_to_string(&args.dem)
+        .with_context(|| format!("cannot read DEM file '{}'", args.dem))?;
+    let dem = DetectorErrorModel::parse(&dem_text)
+        .map_err(|e| anyhow::anyhow!("failed to parse DEM: {e}"))?;
+
+    let sampler = InlineDemSampler::from_dem(&dem);
+    let det = sampler.detector_count;
+    let obs = sampler.observable_count;
+    let shots = args.shots as usize;
+
+    let mut rng: SmallRng = match args.seed {
+        Some(s) => SmallRng::seed_from_u64(s),
+        None => SmallRng::from_entropy(),
+    };
+
+    // Pre-allocate output buffers.
+    let mut x_buf: Vec<u8> = Vec::with_capacity(shots * det);
+    let mut y_buf: Vec<u64> = Vec::with_capacity(shots);
+
+    let mut events = vec![false; det];
+    for _ in 0..shots {
+        for v in events.iter_mut() {
+            *v = false;
+        }
+        let mut obs_flip = 0u64;
+        for error in &sampler.errors {
+            if rng.next_u64() <= error.threshold {
+                for &d in &error.detectors {
+                    events[d as usize] ^= true;
+                }
+                obs_flip ^= error.obs_bitmask;
+            }
+        }
+        for &e in &events {
+            x_buf.push(e as u8);
+        }
+        y_buf.push(obs_flip);
+    }
+
+    // Write SSDS binary format.
+    let mut out = File::create(&args.output)
+        .with_context(|| format!("cannot create '{}'", args.output))?;
+
+    out.write_all(b"SSDS")?;                              // magic
+    out.write_all(&[1u8])?;                               // version
+    out.write_all(&(shots as u64).to_le_bytes())?;        // shots
+    out.write_all(&(det as u32).to_le_bytes())?;          // detector_count
+    out.write_all(&(obs as u32).to_le_bytes())?;          // observable_count
+    out.write_all(&x_buf)?;                               // X (uint8)
+    for &y in &y_buf {
+        out.write_all(&y.to_le_bytes())?;
+    }
+    out.flush()?;
+
+    eprintln!(
+        "Sampled {shots} shots ({det} detectors, {obs} observables) → {}",
+        args.output
+    );
+    Ok(())
+}
+
+// ─── inline DEM sampler (avoids circular dependency with stabstream-sim) ─────
+
+struct InlineCompiledError {
+    threshold: u64,
+    detectors: Vec<u32>,
+    obs_bitmask: u64,
+}
+
+struct InlineDemSampler {
+    errors: Vec<InlineCompiledError>,
+    detector_count: usize,
+    observable_count: usize,
+}
+
+impl InlineDemSampler {
+    fn from_dem(dem: &DetectorErrorModel) -> Self {
+        let errors = dem
+            .errors
+            .iter()
+            .map(|e| {
+                let p = e.probability;
+                let threshold = if p >= 1.0 {
+                    u64::MAX
+                } else if p <= 0.0 {
+                    0
+                } else {
+                    (p * u64::MAX as f64) as u64
+                };
+                let obs_bitmask = e.observables.iter().fold(0u64, |acc, &o| acc | (1u64 << o));
+                InlineCompiledError {
+                    threshold,
+                    detectors: e.detectors.clone(),
+                    obs_bitmask,
+                }
+            })
+            .collect();
+        Self {
+            errors,
+            detector_count: dem.detector_count,
+            observable_count: dem.observable_count,
+        }
+    }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

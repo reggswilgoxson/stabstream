@@ -254,6 +254,80 @@ let result = decoder.decode_window(&window);
 
 ---
 
+## ML Decoder Research
+
+`stabstream.decoders.NeuralDecoder` and the `load_qssf_windows` / `load_dataset`
+utilities add first-class support for training and evaluating neural QEC decoders.
+
+> **Latency note**: Neural decoders (MLPs, RNNs, transformers) are research-stage
+> tools for studying decoder performance tradeoffs. They do **not** run in
+> real-time (&lt;1 µs). Use `UnionFindDecoder` for real-time operation and
+> `NeuralDecoder` for offline threshold analysis and architecture research.
+
+### Generate a training dataset
+
+```bash
+# Sample 100 000 shots from a DEM without running Stim
+stabstream-convert dem-to-dataset \
+    --dem surface_d5.dem \
+    --shots 100000 \
+    --seed 42 \
+    --out training_data.bin
+```
+
+### Load and train in Python
+
+```python
+from stabstream.io import load_dataset
+import torch, torch.nn as nn
+
+X, y = load_dataset("training_data.bin")
+# X.shape == (100000, 24), dtype bool  — detector events
+# y.shape == (100000,),   dtype uint64 — observable flip bitmasks
+
+model = nn.Sequential(nn.Linear(24, 64), nn.ReLU(), nn.Linear(64, 1))
+# ... train with BCEWithLogitsLoss against (y & 1).float() ...
+```
+
+### Evaluate with `NeuralDecoder`
+
+```python
+import torch
+from stabstream import DetectorErrorModel, LogicalErrorAccumulator
+from stabstream.decoders import NeuralDecoder
+
+dem     = DetectorErrorModel.from_file("surface_d5.dem")
+decoder = NeuralDecoder.from_torch("model.pt", observable_count=dem.observable_count)
+acc     = LogicalErrorAccumulator(observable_count=dem.observable_count)
+
+X_test, y_test = load_dataset("test_data.bin")
+for result, gt in zip(decoder.decode_batch(X_test), y_test):
+    acc.record(result, int(gt))
+
+print(f"p_L = {acc.mean_logical_error_rate():.4e}")
+```
+
+`NeuralDecoder` accepts any callable — PyTorch `ScriptModule`, ONNX Runtime
+`InferenceSession`, TensorFlow/Keras `Model`, or a plain NumPy function —
+without mandatory framework imports in the core package.
+
+### Multi-round windows for sequence models
+
+```python
+from stabstream.io import load_qssf_windows
+
+for X, y in load_qssf_windows("recording.qssf", window_depth=5,
+                               batch_size=256, with_labels=True):
+    # X.shape == (256, 5, ancilla_count) — (batch, rounds, ancillas)
+    # y.shape == (256,)                  — observable flip bitmasks
+    loss = model.train_step(X, y)
+```
+
+See `notebooks/05_neural_decoder.ipynb` for a complete end-to-end walkthrough
+comparing an MLP against MWPM on a repetition code.
+
+---
+
 ## Stim DEM Parser
 
 Parse any Stim `.dem` file and build a weighted `SpacetimeGraph` for MWPM/UF decoders:

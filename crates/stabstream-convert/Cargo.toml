@@ -14,9 +14,11 @@ path = "src/main.rs"
 
 [dependencies]
 stabstream-core        = { path = "../stabstream-core" }
+stabstream-dem         = { path = "../stabstream-dem" }
 stabstream-deserialize = { path = "../stabstream-deserialize" }
 thiserror.workspace    = true
 uuid.workspace         = true
 crc32fast.workspace    = true
 clap.workspace         = true
 anyhow.workspace       = true
+rand.workspace         = true

@@ -38,5 +38,6 @@ Integration example::
 from stabstream.decoders.pymatching_decoder import PyMatchingDecoder
 from stabstream.decoders.chromobius import ChromobiusDecoder
 from stabstream.decoders.tesseract import TesseractDecoder
+from stabstream.decoders.neural_decoder import NeuralDecoder
 
-__all__ = ["PyMatchingDecoder", "ChromobiusDecoder", "TesseractDecoder"]
+__all__ = ["PyMatchingDecoder", "ChromobiusDecoder", "TesseractDecoder", "NeuralDecoder"]
