@@ -222,6 +222,95 @@ to the analysis stack required.
 
 ---
 
+## C/FPGA Producer Integration (SHM path)
+
+The fastest integration path for FPGA or ASIC control electronics is the
+POSIX SHM ring (50–200 ns IPC latency vs 2–5 µs for TCP).  `stabstream-ffi`
+exposes a producer-side C API so firmware written in C can write syndrome
+frames directly into the ring:
+
+```c
+#include "stabstream.h"
+
+// Create the SHM ring — consumers open /dev/shm/my_qpu
+StabstreamShmHandle* prod = stabstream_shm_open("my_qpu");
+if (!prod) { /* handle error */ }
+
+// Write a QSSF-encoded syndrome frame on each measurement cycle
+int rc = stabstream_shm_write(prod, frame_bytes, frame_len);
+
+// Tear down (does NOT delete /dev/shm/my_qpu — call shm_unlink separately)
+stabstream_shm_close(prod);
+```
+
+On the decoder side, open the same SHM name as the source URI and read frames:
+
+```bash
+stabstream-analyze shm://my_qpu --decoder union-find --out report.json
+```
+
+### Retrieving decoder corrections from C
+
+After each `stabstream_next_frame` call, retrieve the correction bitmask:
+
+```c
+// Read the next syndrome frame
+int64_t n = stabstream_next_frame(handle, buf, sizeof(buf));
+
+// Get observable_flips: bit i set → logical qubit i was flipped
+int64_t flips = stabstream_decode_frame(handle);
+// Apply feedback gates for each set bit...
+```
+
+**Current behaviour:** `stabstream_decode_frame` returns the `observable_flips`
+value from QSSF TLV metadata (tag `0x10`) when present.  This is the simulator
+ground-truth path — useful for hardware-in-the-loop testing with `stabstream-sim`
+as the syndrome source.  For real hardware frames that carry no metadata, it
+returns `0`.  Wiring a full spacetime-graph decoder (Union-Find or MWPM) into
+the C FFI path is tracked as future work; the API surface is stable.
+
+---
+
+## Known Integration Gaps
+
+### Gap D — Schema must be pre-registered; no dynamic push at connect time
+
+`stabstream_open` currently uses `ValidationPolicy::Disabled` because the
+hardware schema is not automatically loaded in the C/FFI path.  For fixed
+topologies (e.g., a dedicated d=5 surface-code chip), pre-load the schema at
+startup:
+
+```rust
+// Rust side: register schema before opening
+let mut registry = SchemaRegistry::new();
+registry.register_from_file("schemas/surface_code_d5.json")?;
+```
+
+For production systems where topology changes between calibration runs (qubit
+dropout, reconfiguration), dynamic schema push is not yet supported.
+**Workaround:** write the updated schema JSON to a well-known path and restart
+the stabstream consumer process.  Future work: expose
+`stabstream_register_schema_json(const char*, size_t)` in the C API.
+
+### Gap E — SHM ring has no backpressure signal to the hardware producer
+
+`ShmProducer::write_frame` silently overwrites the oldest slot when the 256-slot
+ring is full.  The producer (FPGA firmware) has no way to detect that the decoder
+is falling behind before frames are lost.
+
+**SHM layout bytes 8–15** are currently zeroed/reserved.  The intended future use
+is a `consumer_seq` counter written by the stabstream consumer after each frame
+is processed.  Hardware can read this field to estimate lag:
+
+```
+lag = producer_seq - consumer_seq   // if lag > RING_SLOTS → overrun imminent
+```
+
+Until this is implemented, hardware should pace frame emission to no faster than
+the decoder's sustained throughput (~1.5M frames/s on a modern x86 host).
+
+---
+
 ## Round-Trip Verification
 
 Verify the converted file parses correctly and matches your original data:

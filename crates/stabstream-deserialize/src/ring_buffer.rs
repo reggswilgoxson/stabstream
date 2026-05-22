@@ -58,9 +58,6 @@ impl RingBuffer {
     /// Return a contiguous slice of `len` bytes at the read position without
     /// advancing the cursor. Returns `None` if fewer bytes are available or
     /// if the requested region wraps around the end of the buffer.
-    ///
-    /// For the wrapping case, callers should either reduce `ring_buf_bytes`
-    /// to a power of two and ensure frames fit, or copy to a temporary buffer.
     pub fn peek(&self, len: usize) -> Option<&[u8]> {
         if self.available_read() < len {
             return None;
@@ -69,7 +66,35 @@ impl RingBuffer {
         if read_idx + len <= self.buf.len() {
             Some(&self.buf[read_idx..read_idx + len])
         } else {
-            None // wrap-around: caller must drain or linearise
+            None
+        }
+    }
+
+    /// Return a slice of `len` bytes at the read position, writing into
+    /// `scratch` only when the region wraps around the buffer end.
+    ///
+    /// The fast path (no wrap) returns a direct borrow of the ring's backing
+    /// store with no copy. The wrap path copies at most `len` bytes into
+    /// `scratch` (which callers should pre-allocate to avoid heap churn).
+    ///
+    /// Returns `None` if fewer than `len` bytes are available.
+    pub fn peek_wrapped<'a>(&'a self, len: usize, scratch: &'a mut Vec<u8>) -> Option<&'a [u8]> {
+        if self.available_read() < len {
+            return None;
+        }
+        let read_idx = self.read_pos % self.buf.len();
+        if read_idx + len <= self.buf.len() {
+            Some(&self.buf[read_idx..read_idx + len])
+        } else {
+            // Wrap path: at most one field per frame reaches here (a ring ≥ max_frame_size
+            // guarantees subsequent fields start past the boundary and use the fast path).
+            // reserve before clear so reallocation happens before any new pointer is taken.
+            scratch.reserve(len);
+            scratch.clear();
+            let first = self.buf.len() - read_idx;
+            scratch.extend_from_slice(&self.buf[read_idx..]);
+            scratch.extend_from_slice(&self.buf[..len - first]);
+            Some(scratch.as_slice())
         }
     }
 
@@ -127,6 +152,32 @@ mod tests {
         assert!(rb.peek(5).is_none(), "expected None for wrapping peek");
         // But a smaller non-wrapping peek from index 5 still works (1 byte available at [5]).
         assert!(rb.peek(1).is_some());
+    }
+
+    #[test]
+    fn peek_wrapped_handles_wrap_around() {
+        // Same setup as wrap_around_peek_returns_none, but peek_wrapped must
+        // return the correct bytes rather than None.
+        let mut rb = RingBuffer::new(8);
+        rb.write(&[1, 2, 3, 4, 5, 6]);
+        rb.consume(5);
+        rb.write(&[7, 8, 9, 10]);
+        assert_eq!(rb.available_read(), 5);
+        // Data in ring: index 5→6, index 6→7, index 7→8, index 0→9, index 1→10
+        let mut scratch = Vec::new();
+        let result = rb.peek_wrapped(5, &mut scratch);
+        assert_eq!(result, Some([6u8, 7, 8, 9, 10].as_slice()));
+    }
+
+    #[test]
+    fn peek_wrapped_fast_path_no_alloc() {
+        // Non-wrapping case: peek_wrapped returns a direct borrow (scratch unused).
+        let mut rb = RingBuffer::new(64);
+        rb.write(&[10, 20, 30, 40, 50]);
+        let mut scratch = Vec::new();
+        let result = rb.peek_wrapped(5, &mut scratch);
+        assert_eq!(result, Some([10u8, 20, 30, 40, 50].as_slice()));
+        assert!(scratch.is_empty(), "scratch must not be written for non-wrapping peek");
     }
 
     #[test]
