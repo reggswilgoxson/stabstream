@@ -58,10 +58,9 @@ cargo run -p stabstream-dashboard -- --source tcp://localhost:9000
 # Offline analysis of a recording
 stabstream-analyze --input recording.qssf --dem circuit.dem --decoder union-find
 
-# Threshold sweep
-stabstream-threshold run --dem circuit.dem --shots 100000 --decoder union-find \
-    --p-physical 0.003 --p-physical 0.005 --p-physical 0.008 --out threshold.json
-stabstream-threshold compare --input threshold.json --plot threshold.svg
+# Threshold smoke test (~1s)
+stabstream-threshold run --dem surface_d5.dem --shots 10000 --decoder union-find \
+    --p-physical 0.005 --out smoke.json
 
 # Run benchmarks
 cargo bench -p stabstream-benches
@@ -140,24 +139,33 @@ for latency trade-offs and decoder integration.
 ## Threshold Benchmarking
 
 ```bash
-# Sweep over physical error rates at multiple distances
+# Quick smoke test — single distance/p-value, verifies the pipeline (~1s)
+stabstream-threshold run \
+    --dem surface_d5.dem \
+    --p-physical 0.005 --shots 10000 \
+    --decoder union-find --out smoke.json
+
+# Full threshold sweep — d=3,5,7 × 8 p-values, 100k shots/point (~8s on a laptop)
 stabstream-threshold run \
     --dem surface_d3.dem --dem surface_d5.dem --dem surface_d7.dem \
-    --p-physical 0.001 --p-physical 0.003 --p-physical 0.005 \
-    --p-physical 0.008 --p-physical 0.012 \
+    --p-physical 0.001 --p-physical 0.002 --p-physical 0.003 \
+    --p-physical 0.005 --p-physical 0.008 --p-physical 0.010 \
+    --p-physical 0.012 --p-physical 0.015 \
     --shots 100000 --decoder union-find \
     --out threshold.json --plot threshold.svg
 
-# Compare two runs (e.g. UF vs null decoder)
+# Compare two runs (e.g. UF vs MWPM)
 stabstream-threshold compare \
     --input uf.json --label "Union-Find" \
-    --input null.json --label "Null" \
+    --input mwpm.json --label "Fusion Blossom" \
     --plot comparison.svg
 ```
 
-The `run` subcommand uses `rayon` for parallel shot generation (one
-`(SmallRng, Decoder)` per worker thread) and writes CSV/JSON output. The
-`compare` subcommand estimates the threshold by interpolating the crossing
+The `run` subcommand parallelizes shot generation across all cores with Rayon
+(one `(SmallRng, Decoder)` per worker thread) and writes CSV/JSON output.
+At 8M shots/s on the native sampler, a 3-distance × 8-point sweep at 100k
+shots/point completes in roughly 3–8 seconds depending on hardware.
+The `compare` subcommand estimates the threshold by interpolating the crossing
 between adjacent-distance curves.
 
 ---
