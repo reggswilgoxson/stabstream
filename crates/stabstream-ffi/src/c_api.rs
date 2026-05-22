@@ -1,5 +1,8 @@
 use std::ffi::c_char;
+use std::sync::Arc;
 
+use stabstream_decoder::union_find::UnionFindDecoder;
+use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
 use stabstream_sim::shm::ShmProducer;
 
 use crate::inner::{open_inner, InnerHandle};
@@ -95,6 +98,7 @@ pub unsafe extern "C" fn stabstream_next_frame(
                 return -(StabstreamStatus::InvalidArg as i64);
             }
             inner.last_observable_flips = frame.observable_flips;
+            inner.push_frame_to_window(&frame);
             let buf = unsafe { std::slice::from_raw_parts_mut(out_buf, buf_len) };
             buf[0..8].copy_from_slice(&frame.frame_id.to_le_bytes());
             buf[8..12].copy_from_slice(&frame.round.to_le_bytes());
@@ -141,15 +145,60 @@ pub extern "C" fn stabstream_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
-/// Return the `observable_flips` bitmask for the most recently read frame.
+/// Configure a Union-Find decoder for this stream handle using a Stim DEM.
 ///
-/// Each set bit `i` means logical qubit `i` requires a correction.  The value
-/// is taken from TLV metadata tag `0x10` when present (simulator ground-truth
-/// path) or set to `0` when the frame carries no metadata (real hardware path
-/// where a full decoder must be wired in separately).
+/// `dem_text` must be a UTF-8 string in Stim DEM text format (not
+/// null-terminated; pass its byte length in `dem_len`).  `window_depth` is
+/// the number of syndrome rounds to buffer; pass `0` to infer automatically
+/// from the DEM's detector count and the ancilla count of the first frame.
 ///
-/// Must be called after a successful [`stabstream_next_frame`] call on the same
-/// handle.  Calling before any frame has been read returns `0`.
+/// Returns `0` on success, `-1` if the DEM cannot be parsed.  Calling this
+/// function again replaces the existing decoder and resets the window.
+///
+/// # Safety
+///
+/// - `handle` must be a live pointer obtained from [`stabstream_open`].
+/// - `dem_text` must point to at least `dem_len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn stabstream_set_decoder_dem(
+    handle: *mut StabstreamHandle,
+    dem_text: *const u8,
+    dem_len: usize,
+    window_depth: usize,
+) -> i32 {
+    if handle.is_null() || dem_text.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(dem_text, dem_len) };
+    let text = match std::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let dem = match DetectorErrorModel::parse(text) {
+        Ok(d) => d,
+        Err(_) => return -1,
+    };
+    let detector_count = dem.detector_count;
+    let graph = Arc::new(SpacetimeGraph::from_dem(&dem));
+    let decoder = UnionFindDecoder::new(graph);
+
+    let inner = unsafe { &mut *(handle as *mut InnerHandle) };
+    inner.window_depth_hint = window_depth; // 0 = auto-infer in push_frame_to_window
+    inner.dem_detector_count = detector_count;
+    inner.decoder = Some(decoder);
+    inner.window = None; // reset so it re-initialises with the new depth
+    0
+}
+
+/// Return the `observable_flips` correction bitmask for the most recently read
+/// frame.  Each set bit `i` means logical qubit `i` requires a correction.
+///
+/// When a decoder has been configured via [`stabstream_set_decoder_dem`], this
+/// runs Union-Find over the current syndrome window and returns the decoder's
+/// output.  Without a decoder it falls back to TLV metadata tag `0x10` (the
+/// simulator ground-truth path), or `0` if that is absent.
+///
+/// Must be called after a successful [`stabstream_next_frame`] call.
 ///
 /// # Safety
 ///
@@ -160,7 +209,12 @@ pub unsafe extern "C" fn stabstream_decode_frame(handle: *mut StabstreamHandle) 
         return -(StabstreamStatus::InvalidArg as i64);
     }
     let inner = unsafe { &*(handle as *const InnerHandle) };
-    inner.last_observable_flips.unwrap_or(0) as i64
+    if let (Some(decoder), Some(window)) = (&inner.decoder, &inner.window) {
+        use stabstream_decoder::Decoder;
+        decoder.decode_window(window).observable_flips as i64
+    } else {
+        inner.last_observable_flips.unwrap_or(0) as i64
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +397,131 @@ mod tests {
     fn decode_frame_null_handle() {
         let ret = unsafe { stabstream_decode_frame(std::ptr::null_mut()) };
         assert_eq!(ret, -(StabstreamStatus::InvalidArg as i64));
+    }
+
+    /// Minimal DEM with 24 detectors (matches the d=5 surface-code ancilla count
+    /// used by `synthetic_surface_d5_stream`).  A simple repetition-code chain
+    /// so the UF decoder has a valid graph without requiring a real device DEM.
+    const DEM_24: &str = concat!(
+        "error(0.05) D0 D1\nerror(0.05) D1 D2\nerror(0.05) D2 D3\n",
+        "error(0.05) D3 D4\nerror(0.05) D4 D5\nerror(0.05) D5 D6\n",
+        "error(0.05) D6 D7\nerror(0.05) D7 D8\nerror(0.05) D8 D9\n",
+        "error(0.05) D9 D10\nerror(0.05) D10 D11\nerror(0.05) D11 D12\n",
+        "error(0.05) D12 D13\nerror(0.05) D13 D14\nerror(0.05) D14 D15\n",
+        "error(0.05) D15 D16\nerror(0.05) D16 D17\nerror(0.05) D17 D18\n",
+        "error(0.05) D18 D19\nerror(0.05) D19 D20\nerror(0.05) D20 D21\n",
+        "error(0.05) D21 D22\nerror(0.05) D22 D23\nerror(0.05) D23 ^ L0\n",
+        "detector D0\ndetector D1\ndetector D2\ndetector D3\n",
+        "detector D4\ndetector D5\ndetector D6\ndetector D7\n",
+        "detector D8\ndetector D9\ndetector D10\ndetector D11\n",
+        "detector D12\ndetector D13\ndetector D14\ndetector D15\n",
+        "detector D16\ndetector D17\ndetector D18\ndetector D19\n",
+        "detector D20\ndetector D21\ndetector D22\ndetector D23\n",
+        "logical_observable L0\n"
+    );
+
+    #[test]
+    fn set_decoder_dem_null_handle_returns_error() {
+        let dem = DEM_24.as_bytes();
+        let ret =
+            unsafe { stabstream_set_decoder_dem(std::ptr::null_mut(), dem.as_ptr(), dem.len(), 1) };
+        assert_eq!(ret, -1);
+    }
+
+    #[test]
+    fn set_decoder_dem_bad_utf8_returns_error() {
+        let bytes = synthetic_surface_d5_stream(1, 0.0);
+        let tmp = std::env::temp_dir().join("stabstream_ffi_dem_bad.qssf");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let path = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+        let handle = unsafe { stabstream_open(path.as_ptr()) };
+        assert!(!handle.is_null());
+
+        let bad = [0xFF, 0xFE, 0x00]; // invalid UTF-8
+        let ret = unsafe { stabstream_set_decoder_dem(handle, bad.as_ptr(), bad.len(), 1) };
+        assert_eq!(ret, -1);
+
+        unsafe { stabstream_close(handle) };
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn set_decoder_dem_malformed_probability_returns_error() {
+        // The DEM parser rejects malformed probability values (e.g. "abc").
+        // Unknown instructions are skipped, so the input must contain a
+        // structurally invalid `error(...)` line to trigger a parse error.
+        let bytes = synthetic_surface_d5_stream(1, 0.0);
+        let tmp = std::env::temp_dir().join("stabstream_ffi_dem_malformed.qssf");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let path = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+        let handle = unsafe { stabstream_open(path.as_ptr()) };
+        assert!(!handle.is_null());
+
+        let bad_dem = b"error(not_a_number) D0 D1\n";
+        let ret = unsafe { stabstream_set_decoder_dem(handle, bad_dem.as_ptr(), bad_dem.len(), 1) };
+        assert_eq!(ret, -1);
+
+        unsafe { stabstream_close(handle) };
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn decode_frame_with_uf_decoder_returns_valid_bitmask() {
+        // 5 frames — decoder must return a non-negative bitmask for each.
+        // The exact value depends on syndrome patterns; any u64-range value is valid.
+        let bytes = synthetic_surface_d5_stream(5, 0.05);
+        let tmp = std::env::temp_dir().join("stabstream_ffi_uf_decode.qssf");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let path = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+
+        let handle = unsafe { stabstream_open(path.as_ptr()) };
+        assert!(!handle.is_null());
+
+        // Configure UF decoder with window_depth=1 (single-round decode).
+        let dem = DEM_24.as_bytes();
+        let rc = unsafe { stabstream_set_decoder_dem(handle, dem.as_ptr(), dem.len(), 1) };
+        assert_eq!(rc, 0, "stabstream_set_decoder_dem failed");
+
+        let mut buf = vec![0u8; 1024];
+        for _ in 0..5 {
+            let n = unsafe { stabstream_next_frame(handle, buf.as_mut_ptr(), buf.len()) };
+            assert!(n > 0, "expected bytes written");
+
+            // decode_frame must return a valid i64 (any value is acceptable — the
+            // decoder output depends on the syndrome data in each frame).
+            let flips = unsafe { stabstream_decode_frame(handle) };
+            assert!(flips >= 0, "decode_frame returned negative status {flips}");
+        }
+
+        unsafe { stabstream_close(handle) };
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn set_decoder_dem_replaces_previous_and_resets_window() {
+        // Calling set_decoder_dem twice must succeed; the window is reset each time.
+        let bytes = synthetic_surface_d5_stream(2, 0.05);
+        let tmp = std::env::temp_dir().join("stabstream_ffi_uf_reset.qssf");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let path = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+
+        let handle = unsafe { stabstream_open(path.as_ptr()) };
+        assert!(!handle.is_null());
+
+        let dem = DEM_24.as_bytes();
+        let rc1 = unsafe { stabstream_set_decoder_dem(handle, dem.as_ptr(), dem.len(), 1) };
+        let rc2 = unsafe { stabstream_set_decoder_dem(handle, dem.as_ptr(), dem.len(), 2) };
+        assert_eq!(rc1, 0);
+        assert_eq!(rc2, 0);
+
+        let mut buf = vec![0u8; 1024];
+        let n = unsafe { stabstream_next_frame(handle, buf.as_mut_ptr(), buf.len()) };
+        assert!(n > 0);
+        let flips = unsafe { stabstream_decode_frame(handle) };
+        assert!(flips >= 0);
+
+        unsafe { stabstream_close(handle) };
+        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use std::sync::atomic::AtomicBool;
 
 use stabstream_core::error::StabstreamError;
+use stabstream_core::window::{OwnedSyndromeData, SyndromeWindow};
+use stabstream_decoder::union_find::UnionFindDecoder;
 use stabstream_deserialize::stream::{QssfStream, StreamConfig};
 use stabstream_validate::policy::ValidationPolicy;
 use tokio::io::{AsyncRead, BufReader};
@@ -17,6 +19,8 @@ pub(crate) struct OwnedFrame {
     pub qubit_count: u16,
     pub ancilla_count: u16,
     pub detector_event_count: u32,
+    /// Decoded detector events (one bool per ancilla). Used to feed the decode window.
+    pub detector_events: Vec<bool>,
     pub meas_results: Vec<u8>,
     /// Observable-flip bitmask from TLV metadata (tag 0x10), if present.
     /// Injected by the simulator as ground truth; absent on real hardware frames.
@@ -36,7 +40,10 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
         rt.block_on(async {
             match self.stream.next_frame().await? {
                 Some(frame) => {
+                    let ancilla_count = frame.header.ancilla_count as usize;
                     let detector_event_count = frame.detector_event_count();
+                    let detector_events =
+                        OwnedSyndromeData::decode_rle(frame.payload.detector_events, ancilla_count);
                     let meas_results = frame
                         .payload
                         .meas_results
@@ -51,6 +58,7 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
                         qubit_count: frame.header.qubit_count,
                         ancilla_count: frame.header.ancilla_count,
                         detector_event_count,
+                        detector_events,
                         meas_results,
                         observable_flips,
                     }))
@@ -66,8 +74,50 @@ pub(crate) struct InnerHandle {
     pub source: Box<dyn FrameProducer>,
     /// `observable_flips` from the most recently read frame, for `stabstream_decode_frame`.
     pub last_observable_flips: Option<u64>,
+    /// Union-Find decoder, set by `stabstream_set_decoder_dem`.
+    pub decoder: Option<UnionFindDecoder>,
+    /// Sliding syndrome window fed from `next_frame`. Initialised lazily on the
+    /// first frame read after a decoder is configured (ancilla_count comes from
+    /// the frame header, not the DEM).
+    pub window: Option<SyndromeWindow>,
+    /// Explicit window depth; 0 means "infer from dem_detector_count / ancilla_count".
+    pub window_depth_hint: usize,
+    /// Detector count from the most recently loaded DEM; used for auto-inference.
+    pub dem_detector_count: usize,
     /// Guards against double-close UB. Set to `true` on first `stabstream_close`.
     pub closed: AtomicBool,
+}
+
+impl InnerHandle {
+    /// Push a decoded frame into the syndrome window, initialising it on the
+    /// first call if a decoder has been configured.
+    pub fn push_frame_to_window(&mut self, frame: &OwnedFrame) {
+        if self.decoder.is_none() {
+            return;
+        }
+
+        let ancilla_count = frame.ancilla_count as usize;
+
+        // Lazy window initialisation: ancilla_count comes from the first frame header.
+        if self.window.is_none() {
+            let depth = if self.window_depth_hint > 0 {
+                self.window_depth_hint
+            } else {
+                // Auto-infer: DEM detectors ≈ depth × ancilla_count.
+                (self.dem_detector_count / ancilla_count.max(1)).max(1)
+            };
+            self.window = Some(SyndromeWindow::new(ancilla_count, depth));
+        }
+
+        let window = self.window.as_mut().unwrap();
+        window.push_owned(OwnedSyndromeData {
+            frame_id: frame.frame_id,
+            round: frame.round,
+            timestamp_ns: frame.timestamp_ns,
+            detector_events: frame.detector_events.clone(),
+            meas_results: frame.meas_results.iter().map(|&b| b as i8).collect(),
+        });
+    }
 }
 
 /// Open a QSSF source by URI and return an [`InnerHandle`].
@@ -99,6 +149,10 @@ pub(crate) fn open_inner(source_str: &str) -> Result<InnerHandle, StabstreamErro
         runtime,
         source: producer,
         last_observable_flips: None,
+        decoder: None,
+        window: None,
+        window_depth_hint: 0,
+        dem_detector_count: 0,
         closed: AtomicBool::new(false),
     })
 }
