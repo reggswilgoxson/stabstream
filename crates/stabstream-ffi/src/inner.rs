@@ -18,6 +18,9 @@ pub(crate) struct OwnedFrame {
     pub ancilla_count: u16,
     pub detector_event_count: u32,
     pub meas_results: Vec<u8>,
+    /// Observable-flip bitmask from TLV metadata (tag 0x10), if present.
+    /// Injected by the simulator as ground truth; absent on real hardware frames.
+    pub observable_flips: Option<u64>,
 }
 
 pub(crate) trait FrameProducer: Send {
@@ -40,6 +43,7 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
                         .iter()
                         .map(|&v| v as u8)
                         .collect();
+                    let observable_flips = frame.metadata.as_ref().and_then(|m| m.observable_flips);
                     Ok(Some(OwnedFrame {
                         frame_id: frame.header.frame_id,
                         round: frame.header.round,
@@ -48,6 +52,7 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
                         ancilla_count: frame.header.ancilla_count,
                         detector_event_count,
                         meas_results,
+                        observable_flips,
                     }))
                 }
                 None => Ok(None),
@@ -59,6 +64,8 @@ impl<R: AsyncRead + Unpin + Send + 'static> FrameProducer for QssfProducer<R> {
 pub(crate) struct InnerHandle {
     pub runtime: Runtime,
     pub source: Box<dyn FrameProducer>,
+    /// `observable_flips` from the most recently read frame, for `stabstream_decode_frame`.
+    pub last_observable_flips: Option<u64>,
     /// Guards against double-close UB. Set to `true` on first `stabstream_close`.
     pub closed: AtomicBool,
 }
@@ -91,6 +98,7 @@ pub(crate) fn open_inner(source_str: &str) -> Result<InnerHandle, StabstreamErro
     Ok(InnerHandle {
         runtime,
         source: producer,
+        last_observable_flips: None,
         closed: AtomicBool::new(false),
     })
 }

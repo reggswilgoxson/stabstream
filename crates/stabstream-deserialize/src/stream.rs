@@ -32,6 +32,9 @@ pub struct QssfStream<R: AsyncRead + Unpin> {
     reader: R,
     config: StreamConfig,
     ring_buf: RingBuffer,
+    /// Scratch buffer used by `peek_wrapped` when payload data straddles the ring end.
+    /// Pre-allocated to MAX_FRAME_SIZE; never grows during normal operation.
+    scratch: Vec<u8>,
     /// True after the file header has been parsed.
     header_consumed: bool,
     /// Schema UUID read from the file header; used for StrictParity validation.
@@ -47,6 +50,7 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             reader,
             config,
             ring_buf: RingBuffer::new(buf_size),
+            scratch: Vec::with_capacity(4096),
             header_consumed: false,
             schema_id: Uuid::nil(),
             last_frame_id: None,
@@ -187,48 +191,43 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
             .map(|_: Option<SyndromeFrame<'a>>| None);
         }
 
-        // Safety: peek gives a shared borrow of ring_buf.buf for lifetime 'a.
-        // We consume the bytes after the frame is yielded (caller drops the frame,
-        // then calls next_frame again, at which point &mut self is available).
-        // For now we eagerly copy payload into the ring's contiguous region.
-        // TODO: when peek supports wrap-around, this can be zero-copy end-to-end.
-        let de_slice =
-            self.ring_buf
-                .peek(de_len)
+        // SAFETY: peek_wrapped gives a borrow whose data lives either in ring_buf.buf
+        // (fast path, no wrap) or in self.scratch (wrap path). Both are heap-allocated
+        // and stable. We extend the lifetime to 'a: next_frame takes &'a mut self so
+        // no other mutable access to ring_buf or scratch is possible while frames are live.
+        let de_slice: &'a [u8] = {
+            let s = self
+                .ring_buf
+                .peek_wrapped(de_len, &mut self.scratch)
                 .ok_or(StabstreamError::PayloadLengthMismatch {
                     declared: de_len as u32,
                     actual: self.ring_buf.available_read(),
                 })?;
-
-        // SAFETY: we extend the borrow lifetime to 'a.  This is sound because:
-        // - ring_buf is heap-allocated and stable in memory
-        // - we will not call write() or consume() while this frame is live
-        //   (next_frame takes &'a mut self, so no other mutable access is possible)
-        let de_slice: &'a [u8] =
-            unsafe { std::slice::from_raw_parts(de_slice.as_ptr(), de_slice.len()) };
+            unsafe { std::slice::from_raw_parts(s.as_ptr(), s.len()) }
+        };
         self.ring_buf.consume(de_len);
 
-        let meas_slice =
-            self.ring_buf
-                .peek(ancilla)
+        let meas_slice: &'a [i8] = {
+            let s = self
+                .ring_buf
+                .peek_wrapped(ancilla, &mut self.scratch)
                 .ok_or(StabstreamError::PayloadLengthMismatch {
                     declared: ancilla as u32,
                     actual: self.ring_buf.available_read(),
                 })?;
-        let meas_slice: &'a [i8] = unsafe {
-            std::slice::from_raw_parts(meas_slice.as_ptr().cast::<i8>(), meas_slice.len())
+            unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<i8>(), s.len()) }
         };
         self.ring_buf.consume(ancilla);
 
         let timing_slice: &'a [u16] = if timing_len > 0 {
-            let raw =
-                self.ring_buf
-                    .peek(timing_len)
-                    .ok_or(StabstreamError::PayloadLengthMismatch {
-                        declared: timing_len as u32,
-                        actual: self.ring_buf.available_read(),
-                    })?;
-            let slice = unsafe { std::slice::from_raw_parts(raw.as_ptr().cast::<u16>(), ancilla) };
+            let s = self
+                .ring_buf
+                .peek_wrapped(timing_len, &mut self.scratch)
+                .ok_or(StabstreamError::PayloadLengthMismatch {
+                    declared: timing_len as u32,
+                    actual: self.ring_buf.available_read(),
+                })?;
+            let slice = unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), ancilla) };
             self.ring_buf.consume(timing_len);
             slice
         } else {
@@ -236,14 +235,14 @@ impl<R: AsyncRead + Unpin> QssfStream<R> {
         };
 
         let parity_slice: &'a [u8] = if parity_len > 0 {
-            let raw =
-                self.ring_buf
-                    .peek(parity_len)
-                    .ok_or(StabstreamError::PayloadLengthMismatch {
-                        declared: parity_len as u32,
-                        actual: self.ring_buf.available_read(),
-                    })?;
-            let slice = unsafe { std::slice::from_raw_parts(raw.as_ptr(), raw.len()) };
+            let s = self
+                .ring_buf
+                .peek_wrapped(parity_len, &mut self.scratch)
+                .ok_or(StabstreamError::PayloadLengthMismatch {
+                    declared: parity_len as u32,
+                    actual: self.ring_buf.available_read(),
+                })?;
+            let slice = unsafe { std::slice::from_raw_parts(s.as_ptr(), s.len()) };
             self.ring_buf.consume(parity_len);
             slice
         } else {
