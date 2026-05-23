@@ -7,12 +7,28 @@ re-exports everything from it plus pure-Python utilities.
 
 from __future__ import annotations
 
-from typing import Iterator, Optional
+from pathlib import Path
+from typing import AsyncIterator, Generator, Iterator, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
 
 __version__: str
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class StabstreamError(Exception):
+    """
+    Raised for stabstream-specific errors.
+
+    Common causes:
+    - Accessing ``frame.observable_flips`` without configuring a decoder.
+    - Checksum mismatch or malformed QSSF frame.
+    - Out-of-order frame IDs.
+    """
+    ...
 
 # ---------------------------------------------------------------------------
 # CodeType
@@ -80,8 +96,18 @@ class SyndromeFrame:
     @property
     def distance(self) -> int: ...
     @property
-    def observable_flips(self) -> Optional[int]:
-        """Ground-truth observable flip bitmask (QSSF tag 0x10), or None."""
+    def observable_flips(self) -> int:
+        """
+        Decoded observable-flip bitmask.
+
+        When a decoder is configured on the stream (via ``set_decoder`` or the
+        ``decoder`` parameter to ``open``/``from_stim_circuit``), this returns
+        the Union-Find decoder output.  For simulator frames without a decoder,
+        it returns the ground-truth bitmask from QSSF tag 0x10.
+
+        Raises ``StabstreamError`` if no decoder is configured and no
+        ground-truth metadata is present (real hardware without a decoder).
+        """
         ...
 
     def meas_results(self) -> bytes:
@@ -102,7 +128,8 @@ class SyndromeFrame:
 
         Keys: ``frame_id``, ``round``, ``timestamp_ns``, ``qubit_count``,
         ``ancilla_count``, ``detector_event_count``, ``code_type``,
-        ``distance``, ``detector_events`` (ndarray), ``observable_flips``.
+        ``distance``, ``detector_events`` (ndarray), ``observable_flips``
+        (int or None when no decoder and no ground-truth metadata).
 
         Compatible with ``pd.DataFrame([f.to_dict() for f in stream])``.
         """
@@ -178,18 +205,16 @@ class SyndromeWindow:
     def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
-# StabstreamStream
+# StabstreamStream  (low-level Rust sync stream — prefer SyndromeStream)
 # ---------------------------------------------------------------------------
 
 class StabstreamStream:
     """
-    QSSF stream reader — Python iterator and context manager.
+    Low-level sync QSSF stream.  Prefer ``SyndromeStream`` for new code.
 
-    ::
-
-        with StabstreamStream("recording.qssf") as stream:
-            for frame in stream:
-                arr = frame.to_numpy_detector_events()
+    ``SyndromeStream`` wraps this class and adds async support, the
+    ``set_decoder`` method, and the ``from_stim_circuit`` / ``open``
+    convenience constructors.
     """
 
     def __init__(self, source: str) -> None:
@@ -199,8 +224,24 @@ class StabstreamStream:
         Parameters
         ----------
         source:
-            Filesystem path (``.qssf`` / ``.qssf.zst``) or TCP URI
-            ``tcp://host:port``.
+            Filesystem path (``.qssf``) or TCP URI ``tcp://host:port``.
+        """
+        ...
+
+    def set_decoder(
+        self,
+        dem: Union[str, Path, object],
+        window_depth: int = 0,
+    ) -> None:
+        """
+        Configure the Union-Find decoder.
+
+        Parameters
+        ----------
+        dem:
+            File path, inline DEM text, or ``stim.DetectorErrorModel``.
+        window_depth:
+            Syndrome window depth.  0 = auto-infer (default).
         """
         ...
 
@@ -209,6 +250,72 @@ class StabstreamStream:
     def close(self) -> None: ...
     def __enter__(self) -> StabstreamStream: ...
     def __exit__(self, exc_type: object, exc_val: object, tb: object) -> bool: ...
+
+# ---------------------------------------------------------------------------
+# SyndromeStream  (async-capable high-level wrapper)
+# ---------------------------------------------------------------------------
+
+class SyndromeStream:
+    """
+    Dual-mode (sync + async) QSSF syndrome stream with integrated UF decoder.
+
+    Supports both ``with``/``for`` (sync) and ``async with``/``async for``
+    (async) protocols.
+
+    Parameters
+    ----------
+    source:
+        File path, ``tcp://host:port``, or ``shm://name``.
+    decoder:
+        Optional DEM for the Union-Find decoder.  Accepts a file path, inline
+        DEM text string, or a ``stim.DetectorErrorModel`` object.
+    window_depth:
+        Syndrome window depth.  0 = auto-infer (default).
+    queue_depth:
+        Reserved for future buffered-producer mode.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        *,
+        decoder: Union[str, Path, object, None] = None,
+        window_depth: int = 0,
+        queue_depth: int = 64,
+    ) -> None: ...
+
+    def set_decoder(
+        self,
+        dem: Union[str, Path, object],
+        window_depth: int = 0,
+    ) -> None:
+        """
+        Configure the Union-Find decoder.
+
+        Parameters
+        ----------
+        dem:
+            File path, inline DEM text, or ``stim.DetectorErrorModel``.
+        window_depth:
+            Override the auto-inferred syndrome window depth.
+        """
+        ...
+
+    # ── sync ──────────────────────────────────────────────────────────────────
+    def __enter__(self) -> SyndromeStream: ...
+    def __exit__(self, exc_type: object, exc_val: object, tb: object) -> bool: ...
+    def __iter__(self) -> Iterator[SyndromeFrame]: ...
+    def __next__(self) -> SyndromeFrame: ...
+    def close(self) -> None: ...
+
+    # ── async ─────────────────────────────────────────────────────────────────
+    async def __aenter__(self) -> SyndromeStream: ...
+    async def __aexit__(self, exc_type: object, exc_val: object, tb: object) -> bool: ...
+    def __aiter__(self) -> AsyncIterator[SyndromeFrame]: ...
+    async def __anext__(self) -> SyndromeFrame: ...
+    async def aclose(self) -> None: ...
+
+    def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
 # DetectorErrorModel
@@ -294,10 +401,92 @@ class LogicalErrorAccumulator:
     def __repr__(self) -> str: ...
 
 # ---------------------------------------------------------------------------
-# Pure-Python utilities (from stabstream.io)
+# Convenience constructors
 # ---------------------------------------------------------------------------
 
-from typing import Generator, Union
+def open(
+    source: str,
+    *,
+    decoder: Union[str, Path, object, None] = None,
+    window_depth: int = 0,
+    queue_depth: int = 64,
+) -> SyndromeStream:
+    """
+    Open a QSSF stream (sync + async).
+
+    Parameters
+    ----------
+    source:
+        File path, ``tcp://host:port``, or ``shm://name``.
+    decoder:
+        Optional DEM for the Union-Find decoder.  Accepts a file path, inline
+        DEM text, or a ``stim.DetectorErrorModel`` object.
+    window_depth:
+        Syndrome window depth.  0 = auto-infer (default).
+    queue_depth:
+        Reserved for future buffered-producer mode.
+    """
+    ...
+
+def from_stim_circuit(
+    source: str,
+    circuit: object,
+    *,
+    window_depth: int = 0,
+    queue_depth: int = 64,
+) -> SyndromeStream:
+    """
+    Open a QSSF stream with the decoder auto-configured from a Stim circuit.
+
+    Calls ``circuit.detector_error_model(decompose_errors=True)`` internally.
+
+    Parameters
+    ----------
+    source:
+        File path or ``tcp://host:port``.
+    circuit:
+        A ``stim.Circuit`` object.
+    window_depth:
+        Override the auto-inferred syndrome window depth.
+
+    Examples
+    --------
+    ::
+
+        import stim, stabstream
+
+        circuit = stim.Circuit.from_file("surface_d5.stim")
+
+        async with stabstream.from_stim_circuit("tcp://fpga:9000", circuit) as stream:
+            async for frame in stream:
+                await apply_correction(frame.observable_flips)
+    """
+    ...
+
+def from_stim_dem(
+    source: str,
+    dem: object,
+    *,
+    window_depth: int = 0,
+    queue_depth: int = 64,
+) -> SyndromeStream:
+    """
+    Open a QSSF stream with the decoder configured from a Stim DEM object.
+
+    Parameters
+    ----------
+    source:
+        File path or ``tcp://host:port``.
+    dem:
+        A ``stim.DetectorErrorModel`` object or DEM text string.
+    window_depth:
+        Override the auto-inferred syndrome window depth.
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Pure-Python utilities (from stabstream.io)
+# ---------------------------------------------------------------------------
 
 def load_qssf(path: str) -> Iterator[SyndromeFrame]:
     """
