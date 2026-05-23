@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Performance-1.5M%2B%20frames%2Fs-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Safety-Memory%20Safe%20Rust-yellow?style=for-the-badge" />
   <img src="https://img.shields.io/badge/QEC-Ready-red?style=for-the-badge" />
+  <img src="https://img.shields.io/pypi/v/stabstream?style=for-the-badge&label=PyPI" />
 </p>
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
@@ -16,8 +17,9 @@ bindings (PyO3 + NumPy) and C FFI.
 
 stabstream parses QSSF frames at ~600 ns each, runs a native Union-Find decoder
 in O(n·α(n)) time, and accumulates logical error rates — all without leaving Rust.
-The Python bindings expose zero-copy NumPy arrays and a `DetectorErrorModel.to_pymatching()`
-bridge for MWPM decoding via PyMatching.
+The Python bindings expose a zero-config `from_stim_circuit` entry point,
+zero-copy NumPy arrays, and a `DetectorErrorModel.to_pymatching()` bridge for
+MWPM decoding via PyMatching.
 
 ---
 
@@ -71,10 +73,224 @@ cargo bench -p stabstream-benches
 ### Python bindings
 
 ```bash
-pip install maturin numpy
+pip install stabstream        # pre-built wheels for Linux / macOS / Windows
+```
+
+Or build from source (requires a Rust toolchain):
+
+```bash
+pip install maturin
 cd crates/stabstream-py && maturin develop
-python python/examples/parse_frames.py recording.qssf
-python python/examples/vendor_adapters.py   # IBM / Cirq / NumPy adapters (no hardware needed)
+```
+
+---
+
+## Python Bindings
+
+### Zero-config entry point
+
+If you have a [Stim](https://github.com/quantumlib/Stim) circuit, stabstream
+configures the Union-Find decoder for you automatically:
+
+```python
+import stim
+import stabstream
+
+circuit = stim.Circuit.from_file("surface_d5.stim")
+
+with stabstream.from_stim_circuit("recording.qssf", circuit) as stream:
+    for frame in stream:
+        correction = frame.observable_flips   # int — decoded correction bitmask
+        apply_correction(correction)
+```
+
+No DEM files, no window-depth tuning, no decoder setup.
+
+### With an explicit DEM
+
+If you have a `.dem` file instead of a circuit:
+
+```python
+with stabstream.open("recording.qssf", decoder="surface_d5.dem") as stream:
+    for frame in stream:
+        print(frame.observable_flips)
+```
+
+`set_decoder` also accepts an inline DEM text string or a
+`stim.DetectorErrorModel` object — whichever you already have.
+
+### Raw frame access (no decoder)
+
+```python
+with stabstream.open("recording.qssf") as stream:
+    for frame in stream:
+        events = frame.to_numpy_detector_events()  # np.ndarray[bool], shape (ancilla_count,)
+        meas   = frame.to_numpy_meas_results()     # np.ndarray[int8], shape (ancilla_count,)
+        # frame.observable_flips raises StabstreamError here — no decoder configured
+```
+
+---
+
+## Async
+
+### When to use async
+
+**Most research workflows don't need async.** The sync API (`with` / `for`) is
+simpler and runs at full speed for file replay, threshold sweeps, and single
+live-hardware sources.
+
+Use `async for` when you genuinely need to interleave syndrome decoding with
+other async work — for example, feeding corrections into an async control loop
+or reading from two hardware sources concurrently:
+
+```python
+import asyncio
+import stabstream
+
+async def main():
+    circuit = ...  # stim.Circuit
+
+    # Two independent hardware chips, processed concurrently
+    async def drain(source):
+        async with stabstream.from_stim_circuit(source, circuit) as stream:
+            async for frame in stream:
+                await apply_correction(frame.observable_flips)
+
+    await asyncio.gather(
+        drain("tcp://chip-a:9000"),
+        drain("tcp://chip-b:9000"),
+    )
+
+asyncio.run(main())
+```
+
+### Async foot guns
+
+**1. Don't share a stream between concurrent tasks.**
+One `async for` loop per stream. The stream is not thread-safe; concurrent
+`__anext__` calls on the same object will corrupt its internal state.
+
+```python
+# WRONG — two tasks racing on the same stream
+stream = stabstream.open("tcp://fpga:9000")
+await asyncio.gather(task_a(stream), task_b(stream))  # data corruption
+
+# RIGHT — one stream per source
+await asyncio.gather(task_a("tcp://fpga:9000"), task_b("tcp://fpga:9001"))
+```
+
+**2. Jupyter notebooks already have a running event loop — `asyncio.run()` will fail.**
+
+```python
+# WRONG in Jupyter
+asyncio.run(main())   # RuntimeError: This event loop is already running
+
+# RIGHT in Jupyter — await directly in a cell
+async with stabstream.from_stim_circuit("data.qssf", circuit) as stream:
+    async for frame in stream:
+        print(frame.observable_flips)
+```
+
+**3. Always use `async with`, not a bare `async for`.**
+Without `async with`, the stream is never explicitly closed. On TCP sources
+this leaves the socket open until garbage collection.
+
+```python
+# WRONG — resource leak on TCP
+async for frame in stabstream.open("tcp://fpga:9000"):
+    ...
+
+# RIGHT
+async with stabstream.open("tcp://fpga:9000") as stream:
+    async for frame in stream:
+        ...
+```
+
+**4. Async doesn't mean parallel — Python's GIL still applies.**
+`async for` keeps the event loop responsive (other coroutines can run while
+waiting for the next frame), but two `async for` loops on two streams will
+still take turns, not run simultaneously. For true CPU parallelism across
+multiple streams use `multiprocessing`.
+
+**5. `sync` and `async` interfaces are the same object — don't mix them.**
+
+```python
+# WRONG — mixing sync next() with async loop on the same object
+stream = stabstream.open("tcp://fpga:9000")
+frame0 = next(stream)           # advances the sync cursor
+async for frame in stream:      # picks up from frame1 — surprising but not fatal
+    ...                         # close() is never called — resource leak
+
+# RIGHT — pick one interface and use a context manager
+with stabstream.open("tcp://fpga:9000") as stream:       # sync
+    for frame in stream: ...
+
+async with stabstream.open("tcp://fpga:9000") as stream: # async
+    async for frame in stream: ...
+```
+
+---
+
+## SyndromeWindow — multi-round detector matrix
+
+```python
+from stabstream import SyndromeWindow
+
+window = SyndromeWindow(ancilla_count=24, window_depth=5)
+for frame in stream:
+    window.push(frame)
+    if window.is_full():
+        mat    = window.to_numpy_matrix()    # shape (5, 24), dtype bool
+        active = window.active_detectors()   # flat indices of fired detectors
+```
+
+---
+
+## DetectorErrorModel — PyMatching bridge
+
+```python
+from stabstream import DetectorErrorModel
+
+dem = DetectorErrorModel.from_file("model.dem")
+# dem.detector_count, dem.observable_count, dem.error_count
+
+# Build a pymatching.Matching with -ln(p/(1-p)) edge weights
+matching = dem.to_pymatching()   # requires pip install pymatching
+prediction = matching.decode(detector_events.astype(np.uint8))
+
+# Auto-generate a HardwareSchema JSON from the DEM
+schema_json = dem.to_schema_json("my_surface_code")
+```
+
+---
+
+## LogicalErrorAccumulator
+
+```python
+from stabstream import LogicalErrorAccumulator
+
+acc = LogicalErrorAccumulator(observable_count=1)
+acc.record(decoder_result, ground_truth=frame.observable_flips)
+print(f"p_L = {acc.logical_error_rate(0):.4e}")
+print(f"mean p_L = {acc.mean_logical_error_rate():.4e}")
+```
+
+---
+
+## CodeType — all supported codes
+
+```python
+from stabstream import CodeType
+
+CodeType.SURFACE_CODE       # 0x01
+CodeType.HONEYCOMB_CODE     # 0x02
+CodeType.COLOR_CODE         # 0x03
+CodeType.REPETITION_CODE    # 0x04
+CodeType.TORIC_CODE         # 0x05
+CodeType.BIVARIATE_BICYCLE  # 0x06  IBM BB/Gross codes
+CodeType.HYPERGRAPH_PRODUCT # 0x07  general qLDPC
+CodeType.FIBER_BUNDLE       # 0x08  high-rate codes
+CodeType.CUSTOM             # 0xFF
 ```
 
 ---
@@ -136,6 +352,11 @@ stabstream-sim --simulator native --dem circuit.dem \
 See [docs/tutorials/04_transport_modes.md](docs/tutorials/04_transport_modes.md)
 for latency trade-offs and decoder integration.
 
+> **Note:** The SHM transport is intended for C/FPGA producers writing frames
+> directly into shared memory via `stabstream_shm_open` / `stabstream_shm_write`
+> (C FFI). The Python bindings read from files and TCP only; `shm://` URIs
+> raise a clear error pointing to the C API.
+
 ---
 
 ## Threshold Benchmarking
@@ -163,13 +384,6 @@ stabstream-threshold compare \
     --plot comparison.svg
 ```
 
-The `run` subcommand parallelizes shot generation across all cores with Rayon
-(one `(SmallRng, Decoder)` per worker thread) and writes CSV/JSON output.
-At 8M shots/s on the native sampler, a 3-distance × 8-point sweep at 100k
-shots/point completes in roughly 3–8 seconds depending on hardware.
-The `compare` subcommand estimates the threshold by interpolating the crossing
-between adjacent-distance curves.
-
 ---
 
 ## Decoding Pipeline
@@ -178,24 +392,20 @@ between adjacent-distance curves.
 QSSF stream (file or TCP)
         │
         ▼
-  StabstreamStream        ← PyO3: stabstream.StabstreamStream
-  (zero-copy parse,
-   ~600 ns/frame)
+  stabstream.open() / from_stim_circuit()    ← Python entry points
+  (zero-copy parse, ~600 ns/frame)
         │
         ▼
-  SyndromeWindow          ← PyO3: stabstream.SyndromeWindow
-  (sliding VecDeque,      ← .to_numpy_matrix() → shape (rounds, ancillas)
-   rounds × ancillas)
+  SyndromeWindow                             ← sliding rounds × ancillas matrix
         │
         ├──► UnionFindDecoder     Rust, O(n·α(n)), allocation-free hot path
-        │    (stabstream-decoder)
+        │    (built-in, default)
         │
         └──► PyMatching (MWPM)   Python bridge via DetectorErrorModel.to_pymatching()
              (optimal p_L, slower)
         │
         ▼
-  LogicalErrorAccumulator ← PyO3: stabstream.LogicalErrorAccumulator
-  (AtomicU64, lock-free)
+  LogicalErrorAccumulator                    ← AtomicU64, lock-free
   → p_L per observable, mean p_L
 ```
 
@@ -203,8 +413,8 @@ QSSF stream (file or TCP)
 
 ## Decoders
 
-Two Rust decoders ship out of the box. Python adapters for PyMatching, Chromobius, and
-Tesseract are in `stabstream.decoders` (see
+Two Rust decoders ship out of the box. Python adapters for PyMatching,
+Chromobius, and Tesseract are in `stabstream.decoders` (see
 [Tutorial 5](docs/tutorials/05_decoder_plugins.md)).
 
 | Decoder | Feature flag | Algorithm | Latency (d=5) | p_L quality |
@@ -214,9 +424,9 @@ Tesseract are in `stabstream.decoders` (see
 
 ### Native Union-Find Decoder
 
-`UnionFindDecoder` implements the Delfosse & Nickerson 2021 linear-time algorithm.
-It is the only decoder with a credible real-time path within a 1–4 µs
-superconducting qubit syndrome cycle.
+`UnionFindDecoder` implements the Delfosse & Nickerson 2021 linear-time
+algorithm. It is the only decoder with a credible real-time path within a
+1–4 µs superconducting qubit syndrome cycle.
 
 ```rust
 use std::sync::Arc;
@@ -249,19 +459,6 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 | UF decode | 400 ns | Implemented |
 | **Total** | **~740 ns** | **< 1 µs deadline** |
 
-### Fusion Blossom MWPM Decoder
-
-`FusionBlossomDecoder` achieves MWPM-optimal logical error rates using the
-Fusion Blossom algorithm (Higgott & Gidney 2023). Enable with
-`features = ["mwpm"]`:
-
-```rust
-use stabstream_decoder::mwpm::FusionBlossomDecoder;
-
-let decoder = FusionBlossomDecoder::new(Arc::clone(&graph));
-let result = decoder.decode_window(&window);
-```
-
 ---
 
 ## ML Decoder Research
@@ -277,7 +474,6 @@ utilities add first-class support for training and evaluating neural QEC decoder
 ### Generate a training dataset
 
 ```bash
-# Sample 100 000 shots from a DEM without running Stim
 stabstream-convert dem-to-dataset \
     --dem surface_d5.dem \
     --shots 100000 \
@@ -299,28 +495,6 @@ model = nn.Sequential(nn.Linear(24, 64), nn.ReLU(), nn.Linear(64, 1))
 # ... train with BCEWithLogitsLoss against (y & 1).float() ...
 ```
 
-### Evaluate with `NeuralDecoder`
-
-```python
-import torch
-from stabstream import DetectorErrorModel, LogicalErrorAccumulator
-from stabstream.decoders import NeuralDecoder
-
-dem     = DetectorErrorModel.from_file("surface_d5.dem")
-decoder = NeuralDecoder.from_torch("model.pt", observable_count=dem.observable_count)
-acc     = LogicalErrorAccumulator(observable_count=dem.observable_count)
-
-X_test, y_test = load_dataset("test_data.bin")
-for result, gt in zip(decoder.decode_batch(X_test), y_test):
-    acc.record(result, int(gt))
-
-print(f"p_L = {acc.mean_logical_error_rate():.4e}")
-```
-
-`NeuralDecoder` accepts any callable — PyTorch `ScriptModule`, ONNX Runtime
-`InferenceSession`, TensorFlow/Keras `Model`, or a plain NumPy function —
-without mandatory framework imports in the core package.
-
 ### Multi-round windows for sequence models
 
 ```python
@@ -333,9 +507,6 @@ for X, y in load_qssf_windows("recording.qssf", window_depth=5,
     loss = model.train_step(X, y)
 ```
 
-See `notebooks/05_neural_decoder.ipynb` for a complete end-to-end walkthrough
-comparing an MLP against MWPM on a repetition code.
-
 ---
 
 ## Stim DEM Parser
@@ -346,89 +517,12 @@ Parse any Stim `.dem` file and build a weighted `SpacetimeGraph` for MWPM/UF dec
 use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
 
 let dem = DetectorErrorModel::parse(dem_text)?;
-// detector_count, observable_count, errors, detectors with (x,y,t) coords
 let graph = SpacetimeGraph::from_dem(&dem);
-// nodes: detectors + virtual boundary; edges: weight = -ln(p/(1-p))
 let schema_json = stabstream_dem::schema_gen::schema_from_dem(&dem, "my_code");
 ```
 
 Supports: `error(p) D<i> D<j> ^ L<k>`, `detector(x,y,t) D<i>`,
 `logical_observable L<k>`, and `repeat N { ... }` blocks.
-
----
-
-## Python Bindings
-
-Build with `maturin develop` from `crates/stabstream-py/`.
-
-### SyndromeFrame — NumPy arrays
-
-```python
-from stabstream import StabstreamStream
-
-with StabstreamStream("recording.qssf") as stream:
-    for frame in stream:
-        # Zero-copy views into Rust-owned memory
-        det_events = frame.to_numpy_detector_events()  # shape (ancilla_count,), dtype bool
-        meas       = frame.to_numpy_meas_results()     # shape (ancilla_count,), dtype int8
-        print(frame.observable_flips)  # Optional[int] — ground truth tag 0x10
-```
-
-### SyndromeWindow — multi-round detector matrix
-
-```python
-from stabstream import SyndromeWindow
-
-window = SyndromeWindow(ancilla_count=24, window_depth=5)
-for frame in stream:
-    window.push(frame)
-    if window.is_full():
-        mat = window.to_numpy_matrix()   # shape (5, 24), dtype bool
-        active = window.active_detectors()  # flat indices of fired detectors
-```
-
-### DetectorErrorModel — PyMatching bridge
-
-```python
-from stabstream import DetectorErrorModel
-
-dem = DetectorErrorModel.from_file("model.dem")
-# dem.detector_count, dem.observable_count, dem.error_count
-
-# Build a pymatching.Matching with -ln(p/(1-p)) edge weights (requires pip install pymatching)
-matching = dem.to_pymatching()
-prediction = matching.decode(detector_events.astype(np.uint8))
-
-# Auto-generate a HardwareSchema JSON from the DEM
-schema_json = dem.to_schema_json("my_surface_code")
-```
-
-### LogicalErrorAccumulator
-
-```python
-from stabstream import LogicalErrorAccumulator
-
-acc = LogicalErrorAccumulator(observable_count=1)
-acc.record(decoder_result, ground_truth=frame.observable_flips or 0)
-print(f"p_L = {acc.logical_error_rate(0):.4e}")
-print(f"mean p_L = {acc.mean_logical_error_rate():.4e}")
-```
-
-### CodeType — all supported codes
-
-```python
-from stabstream import CodeType
-
-CodeType.SURFACE_CODE       # 0x01
-CodeType.HONEYCOMB_CODE     # 0x02
-CodeType.COLOR_CODE         # 0x03
-CodeType.REPETITION_CODE    # 0x04
-CodeType.TORIC_CODE         # 0x05
-CodeType.BIVARIATE_BICYCLE  # 0x06  IBM BB/Gross codes
-CodeType.HYPERGRAPH_PRODUCT # 0x07  general qLDPC
-CodeType.FIBER_BUNDLE       # 0x08  high-rate codes
-CodeType.CUSTOM             # 0xFF
-```
 
 ---
 
@@ -442,19 +536,11 @@ use stabstream_metrics::LogicalErrorAccumulator;
 
 let acc = LogicalErrorAccumulator::new(observable_count);
 
-// Record shots concurrently from multiple threads
 acc.record(&decoder_result, ground_truth_bitmask);
 
 let report = acc.report();
-// MetricsReport { total_shots, logical_error_rates, mean_logical_error_rate }
 println!("{}", report.summary());
 ```
-
-The `Histogram` type provides power-of-2 bucket histograms for custom
-decode latency and syndrome weight tracking in user-built pipelines.
-`AnalysisReport` (produced by `stabstream-analyze` and `StreamPlayer::analyze`)
-reports latency as percentiles (p50/p99/max) and syndrome weights as a
-direct-index frequency vector, both serialized to JSON.
 
 ---
 
@@ -464,12 +550,9 @@ QSSF frames can carry the simulator's true observable flip bitmask in metadata
 tag `0x10`. This enables offline threshold analysis from replay files:
 
 ```bash
-# Generate QSSF with observable ground truth from Stim
 stabstream-convert stim-to-qssf \
     --circuit circuit.stim --shots 100000 \
     --with-observables --out training_data.qssf
-
-# In Python: frame.observable_flips contains the u64 bitmask
 ```
 
 ---
@@ -490,14 +573,11 @@ qLDPC families with optional fields:
 }
 ```
 
-All fields are optional — existing schema files remain valid.
-
 ---
 
 ## Benchmarks
 
-Benchmark results on Linux x86-64, release build, Criterion 100-sample runs,
-against a synthetic surface-code d=5 stream (`synthetic_surface_d5_stream`):
+Benchmark results on Linux x86-64, release build, Criterion 100-sample runs:
 
 | Benchmark | Median latency | Throughput |
 |---|---|---|
@@ -506,28 +586,6 @@ against a synthetic surface-code d=5 stream (`synthetic_surface_d5_stream`):
 | Strict parity validation | 601.7 ns | ~1.66M frames/s |
 | RLE popcount — 24 ancillas | 4.71 ns | ~212M ops/s |
 | `analyze_file` + NullDecoder (10K frames) | 4.82 ms | ~2.07M frames/s |
-
-**Validation overhead is negligible.** Strict parity and disabled validation
-are within 2 ns of each other (~600 ns). CRC adds ~70 ns per frame.
-
-**Sub-microsecond frame parse cost.** The 4.71 ns RLE popcount shows the core
-decode logic is extremely fast; the per-frame overhead including the tokio
-`block_on`, `BufReader`, and ring-buffer allocation is under 600 ns end-to-end.
-
-**~1.5M frames/s is far above current hardware syndrome rates.** Real
-superconducting processors batch syndrome rounds at rates orders of magnitude
-below this ceiling, so stabstream is not a bottleneck in the QEC pipeline.
-
-### Benchmark regression note
-
-An earlier run on Windows 10 reported ~14 µs / 70K fps for the same benchmarks.
-The root cause was the benchmark loop creating a fresh `QssfStream` per
-iteration, which allocated (and freed) a 4 MiB `RingBuffer` each time. On
-Linux, glibc uses `mmap`/`munmap` for allocations above 128 KB, making each
-4 MiB alloc ~170 µs. The benchmarks now pass `ring_buf_bytes: 4096` (the
-single-frame payload is ~135 bytes), eliminating the allocation noise and
-surfacing the true parse cost. The RLE popcount benchmark, which has no
-allocation, was unaffected and produced consistent results across both runs.
 
 ---
 
