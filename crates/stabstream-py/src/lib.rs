@@ -7,16 +7,20 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PySet};
 use stabstream_core::{
     code::CodeType,
-    error::StabstreamError,
+    error::StabstreamError as CoreError,
     window::{OwnedSyndromeData, SyndromeWindow},
 };
-use stabstream_decoder::{DecoderResult, LogicalCorrection, PauliOp};
+use stabstream_decoder::{
+    union_find::UnionFindDecoder, Decoder, DecoderResult, LogicalCorrection, PauliOp,
+};
 use stabstream_dem::{DetectorErrorModel, SpacetimeGraph};
 use stabstream_deserialize::stream::{QssfStream, StreamConfig};
 use stabstream_metrics::LogicalErrorAccumulator;
 use stabstream_validate::policy::ValidationPolicy;
 use tokio::io::BufReader;
 use tokio::runtime::Runtime;
+
+pyo3::create_exception!(stabstream, StabstreamError, pyo3::exceptions::PyException);
 
 // ---------------------------------------------------------------------------
 // PyCodeType
@@ -331,8 +335,12 @@ impl PySyndromeFrame {
         self.distance
     }
     #[getter]
-    fn observable_flips(&self) -> Option<u64> {
-        self.observable_flips
+    fn observable_flips(&self) -> PyResult<u64> {
+        self.observable_flips.ok_or_else(|| {
+            StabstreamError::new_err(
+                "No decoder configured — call stream.set_decoder() or use stabstream.open(..., decoder=...) before reading observable_flips",
+            )
+        })
     }
 
     fn meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
@@ -369,7 +377,7 @@ impl PySyndromeFrame {
         d.set_item("code_type", self.code_type)?;
         d.set_item("distance", self.distance)?;
         d.set_item("detector_events", self.to_numpy_detector_events(py))?;
-        d.set_item("observable_flips", self.observable_flips)?;
+        d.set_item("observable_flips", self.observable_flips.map(|v| v as u64))?;
         Ok(d)
     }
 
@@ -595,7 +603,7 @@ impl PyDetectorErrorModel {
 // ---------------------------------------------------------------------------
 
 trait FrameSource: Send {
-    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, StabstreamError>;
+    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, CoreError>;
 }
 
 struct FileSource {
@@ -603,7 +611,7 @@ struct FileSource {
 }
 
 impl FrameSource for FileSource {
-    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, StabstreamError> {
+    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, CoreError> {
         rt.block_on(async {
             match self.stream.next_frame().await? {
                 Some(f) => {
@@ -637,7 +645,7 @@ struct TcpSource {
 }
 
 impl FrameSource for TcpSource {
-    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, StabstreamError> {
+    fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, CoreError> {
         rt.block_on(async {
             match self.stream.next_frame().await? {
                 Some(f) => {
@@ -674,9 +682,13 @@ impl FrameSource for TcpSource {
 pub struct PyStabstreamStream {
     runtime: Option<Runtime>,
     source: Option<Box<dyn FrameSource>>,
+    decoder: Option<UnionFindDecoder>,
+    window: Option<SyndromeWindow>,
+    window_depth_hint: usize,
+    dem_detector_count: usize,
 }
 
-fn open_source(source_str: &str, rt: &Runtime) -> Result<Box<dyn FrameSource>, StabstreamError> {
+fn open_source(source_str: &str, rt: &Runtime) -> Result<Box<dyn FrameSource>, CoreError> {
     let config = StreamConfig {
         validation: ValidationPolicy::Disabled,
         ..Default::default()
@@ -697,16 +709,71 @@ fn open_source(source_str: &str, rt: &Runtime) -> Result<Box<dyn FrameSource>, S
     }
 }
 
+fn extract_dem_text(dem: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = dem.extract::<String>() {
+        if std::path::Path::new(&s).exists() {
+            return std::fs::read_to_string(&s).map_err(|e| PyIOError::new_err(e.to_string()));
+        }
+        return Ok(s);
+    }
+    if dem.hasattr("__fspath__")? {
+        let path: String = dem.call_method0("__fspath__")?.extract()?;
+        return std::fs::read_to_string(&path).map_err(|e| PyIOError::new_err(e.to_string()));
+    }
+    // stim.DetectorErrorModel and anything else: str() gives DEM text
+    Ok(dem.str()?.to_str()?.to_owned())
+}
+
 #[pymethods]
 impl PyStabstreamStream {
     #[new]
     fn new(source: &str) -> PyResult<Self> {
+        if source.starts_with("shm://") {
+            return Err(PyValueError::new_err(
+                "shm:// transport is not available in the Python bindings; \
+                 use the C FFI stabstream_shm_open for SHM access",
+            ));
+        }
         let rt = Runtime::new().map_err(|e| PyIOError::new_err(e.to_string()))?;
         let src = open_source(source, &rt).map_err(|e| PyIOError::new_err(e.to_string()))?;
         Ok(Self {
             runtime: Some(rt),
             source: Some(src),
+            decoder: None,
+            window: None,
+            window_depth_hint: 0,
+            dem_detector_count: 0,
         })
+    }
+
+    /// Configure the Union-Find decoder from a DEM.
+    ///
+    /// Parameters
+    /// ----------
+    /// dem:
+    ///     Accepts a file path (str or pathlib.Path), an inline DEM text string,
+    ///     or a ``stim.DetectorErrorModel`` object (``str(dem)`` gives the text).
+    /// window_depth:
+    ///     Number of syndrome rounds per decode window. 0 = auto-infer from
+    ///     ``detector_count / ancilla_count`` (default).
+    #[pyo3(signature = (dem, window_depth = 0))]
+    fn set_decoder(
+        &mut self,
+        _py: Python<'_>,
+        dem: Bound<'_, PyAny>,
+        window_depth: usize,
+    ) -> PyResult<()> {
+        let text = extract_dem_text(&dem)?;
+        let parsed =
+            DetectorErrorModel::parse(&text).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let detector_count = parsed.detector_count;
+        let graph = Arc::new(SpacetimeGraph::from_dem(&parsed));
+        let uf = UnionFindDecoder::new(graph);
+        self.decoder = Some(uf);
+        self.dem_detector_count = detector_count;
+        self.window_depth_hint = window_depth;
+        self.window = None;
+        Ok(())
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -723,23 +790,53 @@ impl PyStabstreamStream {
         let src = slf.source.as_mut().unwrap();
         let rt_ref = unsafe { &*rt_ptr };
 
-        match src.next_owned(rt_ref) {
-            Ok(Some(f)) => Ok(Some(PySyndromeFrame {
-                frame_id: f.frame_id,
-                round: f.round,
-                timestamp_ns: f.timestamp_ns,
-                qubit_count: f.qubit_count,
-                ancilla_count: f.ancilla_count,
-                detector_event_count: f.detector_event_count,
-                code_type: f.code_type,
-                distance: f.distance,
-                meas_results_raw: f.meas_results,
-                detector_events: f.detector_events,
-                observable_flips: f.observable_flips,
-            })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(PyIOError::new_err(e.to_string())),
+        let raw = match src.next_owned(rt_ref) {
+            Ok(Some(f)) => f,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(PyIOError::new_err(e.to_string())),
+        };
+
+        // Lazily initialise syndrome window on first frame after set_decoder.
+        if slf.decoder.is_some() {
+            let ancilla_count = raw.ancilla_count as usize;
+            if slf.window.is_none() {
+                let depth = if slf.window_depth_hint > 0 {
+                    slf.window_depth_hint
+                } else {
+                    (slf.dem_detector_count / ancilla_count.max(1)).max(1)
+                };
+                slf.window = Some(SyndromeWindow::new(ancilla_count, depth));
+            }
+            let window = slf.window.as_mut().unwrap();
+            window.push_owned(OwnedSyndromeData {
+                frame_id: raw.frame_id,
+                round: raw.round,
+                timestamp_ns: raw.timestamp_ns,
+                detector_events: raw.detector_events.clone(),
+                meas_results: raw.meas_results.iter().map(|&v| v as i8).collect(),
+            });
         }
+
+        let observable_flips = if let (Some(decoder), Some(window)) = (&slf.decoder, &slf.window) {
+            Some(decoder.decode_window(window).observable_flips)
+        } else {
+            // No decoder: use simulator ground-truth TLV tag (may be None for real hardware).
+            raw.observable_flips
+        };
+
+        Ok(Some(PySyndromeFrame {
+            frame_id: raw.frame_id,
+            round: raw.round,
+            timestamp_ns: raw.timestamp_ns,
+            qubit_count: raw.qubit_count,
+            ancilla_count: raw.ancilla_count,
+            detector_event_count: raw.detector_event_count,
+            code_type: raw.code_type,
+            distance: raw.distance,
+            meas_results_raw: raw.meas_results,
+            detector_events: raw.detector_events,
+            observable_flips,
+        }))
     }
 
     fn close(mut slf: PyRefMut<'_, Self>) {
@@ -750,6 +847,7 @@ impl PyStabstreamStream {
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
+
     fn __exit__(&mut self, _exc_type: PyObject, _exc_val: PyObject, _tb: PyObject) -> bool {
         self.source.take();
         self.runtime.take();
@@ -799,7 +897,7 @@ impl PySpacetimeGraph {
 
 #[pymodule]
 #[pyo3(name = "_stabstream")]
-fn stabstream_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn stabstream_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySyndromeFrame>()?;
     m.add_class::<PySyndromeWindow>()?;
     m.add_class::<PyStabstreamStream>()?;
@@ -809,6 +907,7 @@ fn stabstream_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDetectorErrorModel>()?;
     m.add_class::<PySpacetimeGraph>()?;
     m.add_class::<PyLogicalErrorAccumulator>()?;
+    m.add("StabstreamError", py.get_type_bound::<StabstreamError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
