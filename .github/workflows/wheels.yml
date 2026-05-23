@@ -36,18 +36,14 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: crates/stabstream-py
           target: ${{ matrix.target }}
-          args: >-
-            --release
-            --out dist
-            --find-interpreter
-            --manifest-path crates/stabstream-py/Cargo.toml
-          sccache: true
+          args: --release --out dist --find-interpreter
           manylinux: auto
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
-          path: dist
+          path: crates/stabstream-py/dist
 
   windows:
     name: Windows (x64)
@@ -65,17 +61,13 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: crates/stabstream-py
           target: x64
-          args: >-
-            --release
-            --out dist
-            --find-interpreter
-            --manifest-path crates/stabstream-py/Cargo.toml
-          sccache: true
+          args: --release --out dist --find-interpreter
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-x64
-          path: dist
+          path: crates/stabstream-py/dist
 
   macos-intel:
     name: macOS (x86_64)
@@ -93,17 +85,13 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: crates/stabstream-py
           target: x86_64
-          args: >-
-            --release
-            --out dist
-            --find-interpreter
-            --manifest-path crates/stabstream-py/Cargo.toml
-          sccache: true
+          args: --release --out dist --find-interpreter
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-x86_64
-          path: dist
+          path: crates/stabstream-py/dist
 
   macos-arm:
     name: macOS (aarch64)
@@ -121,17 +109,13 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: crates/stabstream-py
           target: aarch64
-          args: >-
-            --release
-            --out dist
-            --find-interpreter
-            --manifest-path crates/stabstream-py/Cargo.toml
-          sccache: true
+          args: --release --out dist --find-interpreter
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-aarch64
-          path: dist
+          path: crates/stabstream-py/dist
 
   sdist:
     name: Source distribution
