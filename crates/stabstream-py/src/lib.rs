@@ -377,7 +377,7 @@ impl PySyndromeFrame {
         d.set_item("code_type", self.code_type)?;
         d.set_item("distance", self.distance)?;
         d.set_item("detector_events", self.to_numpy_detector_events(py))?;
-        d.set_item("observable_flips", self.observable_flips.map(|v| v as u64))?;
+        d.set_item("observable_flips", self.observable_flips)?;
         Ok(d)
     }
 
