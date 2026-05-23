@@ -36,9 +36,12 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manifest-path: crates/stabstream-py/Cargo.toml
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release
+            --out dist
+            --find-interpreter
+            --manifest-path crates/stabstream-py/Cargo.toml
           sccache: true
           manylinux: auto
       - uses: actions/upload-artifact@v4
@@ -62,9 +65,12 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manifest-path: crates/stabstream-py/Cargo.toml
           target: x64
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release
+            --out dist
+            --find-interpreter
+            --manifest-path crates/stabstream-py/Cargo.toml
           sccache: true
       - uses: actions/upload-artifact@v4
         with:
@@ -87,9 +93,12 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manifest-path: crates/stabstream-py/Cargo.toml
           target: x86_64
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release
+            --out dist
+            --find-interpreter
+            --manifest-path crates/stabstream-py/Cargo.toml
           sccache: true
       - uses: actions/upload-artifact@v4
         with:
@@ -112,9 +121,12 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manifest-path: crates/stabstream-py/Cargo.toml
           target: aarch64
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release
+            --out dist
+            --find-interpreter
+            --manifest-path crates/stabstream-py/Cargo.toml
           sccache: true
       - uses: actions/upload-artifact@v4
         with:
@@ -129,9 +141,8 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
-          manifest-path: crates/stabstream-py/Cargo.toml
           command: sdist
-          args: --out dist
+          args: --out dist --manifest-path crates/stabstream-py/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
