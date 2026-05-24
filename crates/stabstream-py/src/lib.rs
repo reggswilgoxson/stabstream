@@ -721,7 +721,7 @@ fn extract_dem_text(dem: &Bound<'_, PyAny>) -> PyResult<String> {
         return std::fs::read_to_string(&path).map_err(|e| PyIOError::new_err(e.to_string()));
     }
     // stim.DetectorErrorModel and anything else: str() gives DEM text
-    Ok(dem.str()?.extract::<String>()?)
+    dem.str()?.extract::<String>()
 }
 
 #[pymethods]
