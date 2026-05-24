@@ -8,8 +8,16 @@
   <img src="https://img.shields.io/badge/Performance-1.5M%2B%20frames%2Fs-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Safety-Memory%20Safe%20Rust-yellow?style=for-the-badge" />
   <img src="https://img.shields.io/badge/QEC-Ready-red?style=for-the-badge" />
-  <img src="https://img.shields.io/pypi/v/stabstream?style=for-the-badge&label=PyPI" />
+  <img src="https://img.shields.io/pypi/v/stabstream?style=for-the-badge&logo=pypi&logoColor=white&color=3775A9" />
 </p>
+
+## Mission
+
+Fault-tolerant quantum processors impose a hard deadline on classical control: syndromes must be decoded and corrections applied before the next gate cycle — typically **under 1 µs** for superconducting qubits. Every microsecond of decoding latency is a microsecond the qubit spends accumulating more errors.
+
+stabstream is the runtime layer between a quantum processor's syndrome readout and the correction signal. It defines a compact binary wire format (QSSF), parses frames in ~600 ns, runs a native Union-Find decoder in < 400 ns, and exposes a C FFI that FPGA and embedded firmware can write into directly — without Python, without a network hop, without allocation in the hot loop.
+
+---
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
 stream deserializer and real-time decoding runtime written in Rust, with Python
