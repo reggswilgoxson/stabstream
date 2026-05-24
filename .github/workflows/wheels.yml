@@ -39,7 +39,7 @@ jobs:
             # the x86_64 host). Use --find-interpreter but strip PyPy first;
             # PyPy 3.11 exceeds PyO3 0.21's max PyPy support (3.10).
             maturin-args: --release --out dist --find-interpreter
-            before-script: 'ls /opt/python | grep ''^pp'' | xargs -I% rm -rf /opt/python/%'
+            before-script: 'rm -rf /opt/python/pp*'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
