@@ -24,9 +24,7 @@ jobs:
       matrix:
         include:
           - target: x86_64
-            # Explicit CPython paths avoid PyPy (pp*) bundled in the x86_64
-            # manylinux container; --find-interpreter would pick up PyPy 3.11
-            # which PyO3 0.21 does not support.
+            # Explicit CPython paths avoid PyPy bundled in the x86_64 container.
             maturin-args: >-
               --release --out dist
               --interpreter
@@ -35,11 +33,13 @@ jobs:
               /opt/python/cp311-cp311/bin/python3.11
               /opt/python/cp312-cp312/bin/python3.12
               /opt/python/cp313-cp313/bin/python3.13
+            before-script: 'true'
           - target: aarch64
-            # Cross-compilation: explicit paths fail (aarch64 binaries can't
-            # execute on x86_64 host). --find-interpreter is safe here because
-            # the aarch64 manylinux container does not bundle PyPy.
+            # Cross-compile: explicit paths fail (aarch64 binaries can't run on
+            # the x86_64 host). Use --find-interpreter but strip PyPy first;
+            # PyPy 3.11 exceeds PyO3 0.21's max PyPy support (3.10).
             maturin-args: --release --out dist --find-interpreter
+            before-script: 'for d in /opt/python/pp*; do rm -rf "$d"; done'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,6 +58,7 @@ jobs:
           args: ${{ matrix.maturin-args }}
           manylinux: auto
           docker-options: -e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+          before-script-linux: ${{ matrix.before-script }}
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
