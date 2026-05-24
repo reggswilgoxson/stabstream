@@ -20,7 +20,7 @@ stabstream-validate    = { path = "../stabstream-validate" }
 stabstream-dem         = { path = "../stabstream-dem" }
 stabstream-metrics     = { path = "../stabstream-metrics" }
 pyo3.workspace         = true
-numpy                  = "0.21"
-ndarray                = "0.15"
+numpy                  = "0.28"
+ndarray                = "0.17"
 tokio.workspace        = true
 serde_json.workspace   = true
