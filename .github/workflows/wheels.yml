@@ -32,6 +32,7 @@ jobs:
             3.10
             3.11
             3.12
+            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -39,7 +40,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           manylinux: auto
-          before-script-linux: find /opt/python -maxdepth 1 -name 'cp313*' -type d -exec rm -rf {} + 2>/dev/null || true
+          docker-options: -e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
@@ -57,8 +58,11 @@ jobs:
             3.10
             3.11
             3.12
+            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         with:
           working-directory: crates/stabstream-py
           target: x64
@@ -80,8 +84,11 @@ jobs:
             3.10
             3.11
             3.12
+            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         with:
           working-directory: crates/stabstream-py
           target: x86_64
@@ -103,8 +110,11 @@ jobs:
             3.10
             3.11
             3.12
+            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
         with:
           working-directory: crates/stabstream-py
           target: aarch64
