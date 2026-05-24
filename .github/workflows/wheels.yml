@@ -41,6 +41,7 @@ jobs:
           args: --release --out dist --find-interpreter
           manylinux: auto
           docker-options: -e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+          before-script-linux: find /opt/python -maxdepth 1 -name 'pp*' -type d -exec rm -rf {} + 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
