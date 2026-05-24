@@ -29,7 +29,7 @@ pub fn decode_detector_events(encoded: &[u8]) -> Vec<bool> {
     for &token in encoded {
         let mode = (token >> 7) != 0;
         let run = (token & 0x7F) as usize;
-        out.extend(std::iter::repeat(mode).take(run));
+        out.extend(std::iter::repeat_n(mode, run));
     }
     out
 }

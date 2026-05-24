@@ -560,7 +560,7 @@ impl PyDetectorErrorModel {
         let boundary = graph.boundary_node;
 
         // Collect boundary node indices into a Python set
-        let boundary_set = PySet::new(py, &[boundary])?;
+        let boundary_set = PySet::new(py, [boundary])?;
 
         for edge in &graph.edges {
             let u = edge.u as usize;
