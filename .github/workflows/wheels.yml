@@ -32,7 +32,6 @@ jobs:
             3.10
             3.11
             3.12
-            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -40,6 +39,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           manylinux: auto
+          before-script-linux: find /opt/python -maxdepth 1 -name 'cp313*' -type d -exec rm -rf {} + 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
@@ -57,7 +57,6 @@ jobs:
             3.10
             3.11
             3.12
-            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -81,7 +80,6 @@ jobs:
             3.10
             3.11
             3.12
-            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -105,7 +103,6 @@ jobs:
             3.10
             3.11
             3.12
-            3.13
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
