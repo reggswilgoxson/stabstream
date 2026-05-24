@@ -24,7 +24,7 @@ edition      = "2021"
 authors      = ["stabstream contributors"]
 license      = "Apache-2.0"
 repository   = "https://github.com/your-org/stabstream"
-rust-version = "1.75"
+rust-version = "1.83"
 
 [workspace.dependencies]
 # async runtime
@@ -41,7 +41,7 @@ serde_json   = "1"
 # compression
 zstd         = "0.13"
 # FFI / Python
-pyo3         = { version = "0.21", features = ["extension-module"] }
+pyo3         = { version = "0.28", features = ["extension-module"] }
 cbindgen     = "0.26"
 # TUI
 ratatui      = "0.26"

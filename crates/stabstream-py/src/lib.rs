@@ -26,7 +26,7 @@ pyo3::create_exception!(stabstream, StabstreamError, pyo3::exceptions::PyExcepti
 // PyCodeType
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "CodeType")]
+#[pyclass(name = "CodeType", from_py_object)]
 #[derive(Clone)]
 pub struct PyCodeType {
     inner: CodeType,
@@ -99,7 +99,7 @@ impl PyCodeType {
 // PyLogicalCorrection / PyDecoderResult
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "LogicalCorrection")]
+#[pyclass(name = "LogicalCorrection", from_py_object)]
 #[derive(Clone)]
 pub struct PyLogicalCorrection {
     #[pyo3(get)]
@@ -344,18 +344,18 @@ impl PySyndromeFrame {
     }
 
     fn meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new_bound(py, &self.meas_results_raw)
+        PyBytes::new(py, &self.meas_results_raw)
     }
 
     /// Detector events as a 1-D NumPy bool array of shape `(ancilla_count,)`.
     fn to_numpy_detector_events<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
-        self.detector_events.clone().into_pyarray_bound(py)
+        self.detector_events.clone().into_pyarray(py)
     }
 
     /// Ancilla measurement results as a 1-D NumPy int8 array of shape `(ancilla_count,)`.
     fn to_numpy_meas_results<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i8>> {
         let data: Vec<i8> = self.meas_results_raw.iter().map(|&v| v as i8).collect();
-        data.into_pyarray_bound(py)
+        data.into_pyarray(py)
     }
 
     fn null_decode(&self) -> PyDecoderResult {
@@ -367,7 +367,7 @@ impl PySyndromeFrame {
     /// The `detector_events` key holds a 1-D NumPy bool array. All scalar
     /// fields are plain Python ints/floats.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
-        let d = pyo3::types::PyDict::new_bound(py);
+        let d = pyo3::types::PyDict::new(py);
         d.set_item("frame_id", self.frame_id)?;
         d.set_item("round", self.round)?;
         d.set_item("timestamp_ns", self.timestamp_ns)?;
@@ -448,12 +448,12 @@ impl PySyndromeWindow {
         let ancillas = self.inner.ancilla_count;
         if rounds == 0 {
             let arr = Array2::<bool>::default((0, ancillas));
-            return Ok(arr.into_pyarray_bound(py));
+            return Ok(arr.into_pyarray(py));
         }
         let flat = self.inner.detector_matrix().to_vec();
         let arr = Array2::from_shape_vec((rounds, ancillas), flat)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(arr.into_pyarray_bound(py))
+        Ok(arr.into_pyarray(py))
     }
 
     /// Push detector events directly from a 1-D NumPy bool array.
@@ -548,10 +548,10 @@ impl PyDetectorErrorModel {
     /// Requires `pymatching` to be installed (`pip install pymatching`).
     /// Edges are added with weight `-ln(p/(1-p))` and `fault_ids` identifying
     /// which observables flip when the error fires.
-    fn to_pymatching(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_pymatching(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let graph = SpacetimeGraph::from_dem(&self.inner);
 
-        let pymatching = py.import_bound("pymatching").map_err(|_| {
+        let pymatching = py.import("pymatching").map_err(|_| {
             PyImportError::new_err("pymatching not found — install it with: pip install pymatching")
         })?;
 
@@ -560,7 +560,7 @@ impl PyDetectorErrorModel {
         let boundary = graph.boundary_node;
 
         // Collect boundary node indices into a Python set
-        let boundary_set = PySet::new_bound(py, &[boundary])?;
+        let boundary_set = PySet::new(py, &[boundary])?;
 
         for edge in &graph.edges {
             let u = edge.u as usize;
@@ -568,7 +568,7 @@ impl PyDetectorErrorModel {
             let weight = edge.weight as f64;
             let fault_ids: Vec<usize> = edge.fault_ids.iter().map(|&id| id as usize).collect();
 
-            let kwargs = pyo3::types::PyDict::new_bound(py);
+            let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("weight", weight)?;
             if !fault_ids.is_empty() {
                 kwargs.set_item("fault_ids", fault_ids)?;
@@ -602,7 +602,7 @@ impl PyDetectorErrorModel {
 // Frame producer trait (file vs TCP)
 // ---------------------------------------------------------------------------
 
-trait FrameSource: Send {
+trait FrameSource: Send + Sync {
     fn next_owned(&mut self, rt: &Runtime) -> Result<Option<OwnedFrame>, CoreError>;
 }
 
@@ -848,7 +848,7 @@ impl PyStabstreamStream {
         slf
     }
 
-    fn __exit__(&mut self, _exc_type: PyObject, _exc_val: PyObject, _tb: PyObject) -> bool {
+    fn __exit__(&mut self, _exc_type: Py<PyAny>, _exc_val: Py<PyAny>, _tb: Py<PyAny>) -> bool {
         self.source.take();
         self.runtime.take();
         false
@@ -907,7 +907,7 @@ fn stabstream_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDetectorErrorModel>()?;
     m.add_class::<PySpacetimeGraph>()?;
     m.add_class::<PyLogicalErrorAccumulator>()?;
-    m.add("StabstreamError", py.get_type_bound::<StabstreamError>())?;
+    m.add("StabstreamError", py.get_type::<StabstreamError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
