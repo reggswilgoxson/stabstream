@@ -38,10 +38,17 @@ jobs:
         with:
           working-directory: crates/stabstream-py
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release
+            --out dist
+            --interpreter
+            /opt/python/cp39-cp39/bin/python3.9
+            /opt/python/cp310-cp310/bin/python3.10
+            /opt/python/cp311-cp311/bin/python3.11
+            /opt/python/cp312-cp312/bin/python3.12
+            /opt/python/cp313-cp313/bin/python3.13
           manylinux: auto
           docker-options: -e PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-          before-script-linux: find /opt/python -maxdepth 1 -name 'pp*' -type d -exec rm -rf {} + 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
