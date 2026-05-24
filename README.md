@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Performance-1.5M%2B%20frames%2Fs-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Safety-Memory%20Safe%20Rust-yellow?style=for-the-badge" />
   <img src="https://img.shields.io/badge/QEC-Ready-red?style=for-the-badge" />
-  <img src="https://img.shields.io/pypi/v/stabstream?style=for-the-badge&logo=pypi&logoColor=white&color=3775A9" />
+  <img src="https://img.shields.io/badge/PyPI-stabstream-3775A9?style=for-the-badge&logo=pypi&logoColor=white" />
 </p>
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
