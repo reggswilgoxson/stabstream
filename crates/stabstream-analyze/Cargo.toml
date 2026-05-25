@@ -24,3 +24,8 @@ stabstream-replay  = { path = "../stabstream-replay" }
 clap.workspace     = true
 serde_json.workspace = true
 anyhow.workspace   = true
+
+[dev-dependencies]
+stabstream-deserialize = { path = "../stabstream-deserialize" }
+stabstream-validate    = { path = "../stabstream-validate" }
+tokio.workspace        = true
