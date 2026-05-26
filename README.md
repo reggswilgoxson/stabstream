@@ -27,9 +27,7 @@ MWPM decoding via PyMatching.
 
 ## Mission
 
-Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone.
-
-stabstream is the software that lives in that window. It receives a stream of error signals from quantum hardware, figures out what went wrong using a built-in decoder, and hands back a correction — all in under a millionth of a second. It is designed to work with any quantum processor, speak directly to the chips and FPGAs that sit closest to the hardware, and scale from a laptop experiment to a production control system without changing a line of research code.
+Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone. Stabstream is the software that lives in that window. It receives a stream of error signals from quantum hardware, figures out what went wrong using a built-in decoder, and hands back a correction — all in under a millionth of a second. It is designed to work with any quantum processor, speak directly to the chips and FPGAs that sit closest to the hardware, and scale from a laptop experiment to a production control system without changing a line of research code.
 ---
 
 ## Workspace Crates
