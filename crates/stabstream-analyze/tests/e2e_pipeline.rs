@@ -69,5 +69,8 @@ async fn e2e_pipeline_parse_decode_accumulate() {
 
     // The pipeline produced a valid logical error rate in [0, 1].
     let p_l = acc.logical_error_rate(0);
-    assert!((0.0..=1.0).contains(&p_l), "p_L must be in [0, 1], got {p_l}");
+    assert!(
+        (0.0..=1.0).contains(&p_l),
+        "p_L must be in [0, 1], got {p_l}"
+    );
 }
