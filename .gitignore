@@ -12,3 +12,4 @@ cbindgen-output/
 dist/
 __pycache__/
 *.pyc
+profile.json.gz
