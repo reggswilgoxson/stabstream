@@ -23,7 +23,7 @@ version      = "0.1.0"
 edition      = "2021"
 authors      = ["stabstream contributors"]
 license      = "Apache-2.0"
-repository   = "https://github.com/your-org/stabstream"
+repository   = "https://github.com/reggswilgoxson/stabstream"
 rust-version = "1.83"
 
 [workspace.dependencies]
