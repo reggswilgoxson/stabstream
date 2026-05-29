@@ -93,6 +93,34 @@ cd crates/stabstream-py && maturin develop
 
 ---
 
+## Python Wheels — v0.1.0
+
+Pre-built wheels are published to [PyPI](https://pypi.org/project/stabstream/) and install with no Rust toolchain required:
+
+```bash
+pip install stabstream
+```
+
+### Supported platforms
+
+| Platform | Architecture | Python versions |
+|----------|--------------|-----------------|
+| Linux (manylinux2014) | x86_64 | 3.9, 3.10, 3.11, 3.12, 3.13 |
+| Linux (manylinux2014) | aarch64 | 3.9, 3.10, 3.11, 3.12, 3.13 |
+| macOS | universal2 (Intel + Apple Silicon) | 3.9, 3.10, 3.11, 3.12, 3.13 |
+| Windows | x64 | 3.9, 3.10, 3.11, 3.12, 3.13 |
+
+A source distribution (`stabstream-0.1.0.tar.gz`) is also published for platforms not covered above; building from source requires a Rust 1.83+ toolchain.
+
+### What's new in this release
+
+- **PyO3 0.28 / numpy 0.28**: upgraded from 0.21, unlocking current PyO3 features and matching numpy's latest ABI.
+- **macOS universal2**: a single wheel now covers both Intel and Apple Silicon; the previous separate `x86_64-apple-darwin` and `aarch64-apple-darwin` jobs are retired.
+- **aarch64 Linux CPython-only**: the aarch64 manylinux build targets CPython interpreters only; PyPy is excluded from that target to avoid cross-compilation complications.
+- **OIDC trusted publishing**: wheels are pushed to PyPI via GitHub Actions OIDC — no long-lived API token stored in secrets.
+
+---
+
 ## Python Bindings
 
 ### Zero-config entry point
