@@ -112,13 +112,6 @@ pip install stabstream
 
 A source distribution (`stabstream-0.1.0.tar.gz`) is also published for platforms not covered above; building from source requires a Rust 1.83+ toolchain.
 
-### What's new in this release
-
-- **PyO3 0.28 / numpy 0.28**: upgraded from 0.21, unlocking current PyO3 features and matching numpy's latest ABI.
-- **macOS universal2**: a single wheel now covers both Intel and Apple Silicon; the previous separate `x86_64-apple-darwin` and `aarch64-apple-darwin` jobs are retired.
-- **aarch64 Linux CPython-only**: the aarch64 manylinux build targets CPython interpreters only; PyPy is excluded from that target to avoid cross-compilation complications.
-- **OIDC trusted publishing**: wheels are pushed to PyPI via GitHub Actions OIDC — no long-lived API token stored in secrets.
-
 ---
 
 ## Python Bindings
@@ -629,6 +622,33 @@ Benchmark results on Linux x86-64, release build, Criterion 100-sample runs:
 
 See [`spec/QSSF_FORMAT.md`](spec/QSSF_FORMAT.md) for the full QEC Syndrome
 Stream Format (QSSF) binary format specification.
+
+---
+
+## Patch Notes
+
+### v0.1.0 — Python wheels, OIDC publishing, universal2 macOS
+
+**Python / packaging**
+
+- **PyO3 0.28 / numpy 0.28**: upgraded from 0.21, unlocking current PyO3
+  features and matching numpy's latest ABI.
+- **macOS universal2**: a single wheel now covers both Intel and Apple Silicon;
+  the previous separate `x86_64-apple-darwin` and `aarch64-apple-darwin` CI
+  jobs are retired.
+- **aarch64 Linux CPython-only**: the aarch64 manylinux build targets CPython
+  interpreters only; PyPy is excluded from that target to avoid
+  cross-compilation complications.
+- **OIDC trusted publishing**: wheels are pushed to PyPI via GitHub Actions
+  OIDC — no long-lived API token stored in secrets.
+
+**Documentation**
+
+- Rewrote [`QUICKSTART.md`](QUICKSTART.md) for Python researchers: pure-Python
+  path with Colab/Jupyter cell-by-cell walkthrough; Rust CLI moved to an
+  "Advanced / Production" section.
+
+---
 
 ## License
 
