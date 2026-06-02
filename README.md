@@ -15,7 +15,7 @@ A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
 stream deserializer and real-time decoding runtime written in Rust, with Python
 bindings (PyO3 + NumPy) and C FFI.
 
-stabstream parses QSSF frames at ~600 ns each, runs a native Union-Find decoder
+Stabstream parses QSSF frames at ~600 ns each, runs a native Union-Find decoder
 in O(n·α(n)) time, and accumulates logical error rates — all without leaving Rust.
 The Python bindings expose a zero-config `from_stim_circuit` entry point,
 zero-copy NumPy arrays, and a `DetectorErrorModel.to_pymatching()` bridge for
