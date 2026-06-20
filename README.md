@@ -12,22 +12,30 @@
 </p>
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
-stream deserializer and real-time decoding runtime written in Rust, with Python
+stream deserializer and low-latency decoding runtime written in Rust, with Python
 bindings (PyO3 + NumPy) and C FFI.
 
-Stabstream parses QSSF frames at ~600 ns each, runs a native Union-Find decoder
-in O(n·α(n)) time, and accumulates logical error rates — all without leaving Rust.
-The Python bindings expose a zero-config `from_stim_circuit` entry point,
-zero-copy NumPy arrays, and a `DetectorErrorModel.to_pymatching()` bridge for
-MWPM decoding via PyMatching.
+Stabstream parses QSSF frames, runs a native Union-Find decoder in O(n·α(n)) time,
+and accumulates logical error rates — all without leaving Rust. The Python bindings
+expose a zero-config `from_stim_circuit` entry point, zero-copy NumPy arrays, and a
+`DetectorErrorModel.to_pymatching()` bridge for MWPM decoding via PyMatching.
 
 > **New to stabstream or QEC?** See [ARCHITECTURE.md](ARCHITECTURE.md) for an
 > annotated pipeline diagram, component map, and frame anatomy — designed for
 > researchers coming from quantum computing rather than systems programming.
 
+> **Honest scope** — stabstream is a research runtime. Its decode path is built to
+> fit the microsecond syndrome-cycle budget, and meets that budget in
+> microbenchmarks and in offline replay. It has **not** been demonstrated decoding
+> a live quantum processor in real time: current hardware does not publicly expose
+> streaming syndrome data (see
+> [docs/tutorials/07_hardware_integration.md](docs/tutorials/07_hardware_integration.md)).
+> Today's supported workflows are simulation, offline analysis of recordings, and
+> threshold studies.
+
 ## Mission
 
-Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone. Stabstream is the software that lives in that window. It receives a stream of error signals from quantum hardware, figures out what went wrong using a built-in decoder, and hands back a correction — all in under a millionth of a second. It is designed to work with any quantum processor, speak directly to the chips and FPGAs that sit closest to the hardware, and scale from a laptop experiment to a production control system without changing a line of research code.
+Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone. Stabstream is the software designed to live in that window. It receives a stream of error signals (from a simulator today, and from hardware once such streams are exposed), figures out what went wrong using a built-in decoder, and hands back a correction. It aims to work with any quantum processor and to speak directly to the chips and FPGAs that sit closest to the hardware (via the C FFI and shared-memory transport), scaling from a laptop experiment toward a control-system deployment without changing a line of research code.
 
 ---
 
@@ -36,20 +44,21 @@ Quantum computers make mistakes — a lot of them. To run useful computations, t
 | Crate | Description |
 |-------|-------------|
 | `stabstream-core` | `SyndromeFrame`, `SyndromeWindow`, `CodeType`, stabilizer models, `HardwareSchema` |
-| `stabstream-dem` | Stim DEM parser, `SpacetimeGraph` builder, schema generation from DEM |
-| `stabstream-decoder` | `Decoder` trait, `NullDecoder`, `UnionFindDecoder` (O(n·α(n))) |
+| `stabstream-dem` | Stim DEM parser, `SpacetimeGraph` builder, schema generation from DEM (`ldpc-to-schema` bin) |
+| `stabstream-decoder` | `Decoder` trait, `NullDecoder`, `UnionFindDecoder` (O(n·α(n))), and `FusionBlossomDecoder` (MWPM, `mwpm` feature) |
 | `stabstream-metrics` | `LogicalErrorAccumulator` (lock-free), `Histogram`, `AnalysisReport` |
-| `stabstream-deserialize` | Zero-copy QSSF binary parser and async pipeline |
-| `stabstream-validate` | Parity checks, timing validation, bounds enforcement |
-| `stabstream-convert` | QSSF ↔ Stim conversion, observable ground-truth export |
+| `stabstream-deserialize` | Zero-copy QSSF binary parser, RLE codec, ring buffer, and async stream pipeline |
+| `stabstream-validate` | Parity checks, timing validation, schema-consistency and bounds enforcement |
+| `stabstream-convert` | QSSF ↔ Stim conversion, observable ground-truth export, ML dataset generation (`dem-to-dataset`) |
 | `stabstream-replay` | zstd-compressed stream recording, `StreamPlayer`, `analyze_file` |
 | `stabstream-analyze` | `stabstream-analyze` CLI: offline decode + analysis of QSSF recordings |
-| `stabstream-sim` | QSSF simulator — direct, broadcast, and SHM transport modes |
+| `stabstream-sim` | QSSF syndrome stream simulator (Stim subprocess or native DEM sampler); direct, broadcast, and SHM transports |
 | `stabstream-threshold` | `stabstream-threshold run/compare` — threshold sweep and SVG plotting |
 | `stabstream-py` | PyO3 Python bindings — NumPy arrays, DEM bridge, vendor adapters |
-| `stabstream-ffi` | C header generation (cbindgen) |
-| `dashboard` | `ratatui` TUI for live syndrome monitoring |
-| `benches` | Criterion benchmarks for parse throughput and validator overhead |
+| `stabstream-ffi` | C FFI (`cdylib`) exposing the parser/decoder/SHM API to C and FPGA producers; generates a C header via cbindgen |
+| `dashboard` | `stabstream-dashboard`: `ratatui` TUI for live syndrome monitoring |
+| `benches` | Criterion benchmarks: parse throughput, validator overhead, noise sampler, replay throughput |
+| `fuzz` | `cargo-fuzz` / libFuzzer targets for the frame-header parser, DEM parser, and RLE decoder |
 
 ---
 
@@ -90,6 +99,25 @@ Or build from source (requires a Rust toolchain):
 pip install maturin
 cd crates/stabstream-py && maturin develop
 ```
+
+---
+
+## Notebooks & Tutorials
+
+Rather than explain every workflow inline, the repo ships runnable examples and
+prose guides — start there:
+
+- **[`notebooks/`](notebooks/)** — Jupyter notebooks: syndrome exploration,
+  threshold sweeps, decoder comparison (UF vs PyMatching vs Fusion Blossom),
+  hardware debugging, and neural-decoder training.
+- **[`docs/tutorials/`](docs/tutorials/)** — step-by-step guides: hello-syndrome,
+  offline analysis, Python integration, transport modes, decoder plugins, and
+  hardware integration.
+- **[`docs/theory/`](docs/theory/)** — a QEC primer and a decoder guide covering
+  the Union-Find / MWPM / real-time latency trade-offs.
+- **[`examples/`](examples/)** and **[`schemas/`](schemas/)** — standalone Rust
+  examples (Stim DEM import, PyMatching bridge) and sample `HardwareSchema` JSON
+  files for surface, color, honeycomb, repetition, and bivariate-bicycle codes.
 
 ---
 
@@ -446,10 +474,13 @@ Two Rust decoders ship out of the box. Python adapters for PyMatching,
 Chromobius, and Tesseract are in `stabstream.decoders` (see
 [Tutorial 5](docs/tutorials/05_decoder_plugins.md)).
 
-| Decoder | Feature flag | Algorithm | Latency (d=5) | p_L quality |
-|---------|-------------|-----------|---------------|-------------|
+| Decoder | Feature flag | Algorithm | Latency target (d=5) | p_L quality |
+|---------|-------------|-----------|----------------------|-------------|
 | `UnionFindDecoder` | *(default)* | Union-Find O(n·α(n)) | < 400 ns | Near-optimal |
 | `FusionBlossomDecoder` | `mwpm` | Fusion Blossom MWPM | ~4 µs | Optimal |
+
+> The latency column states design targets, not benchmarked numbers — there is no
+> decoder-latency benchmark in `benches/` yet (see the Benchmarks note below).
 
 ### Native Union-Find Decoder
 
@@ -482,11 +513,15 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 
 | Stage | Budget | Status |
 |-------|--------|--------|
-| Frame deserialization | 200 ns | Achieved (~600 ns total) |
-| CRC validation | 70 ns | Achieved |
+| Frame deserialization | 200 ns | Implemented (parse benched at ~600 ns; needs rerun) |
+| CRC validation | 70 ns | Implemented |
 | Window slide | 20 ns | Implemented |
-| UF decode | 400 ns | Implemented |
-| **Total** | **~740 ns** | **< 1 µs deadline** |
+| UF decode | 400 ns | Implemented (not yet benchmarked) |
+| **Total** | **~740 ns** | **design target, < 1 µs deadline** |
+
+> "Implemented" means the stage exists and is covered by the test suite; the
+> latency figures are budgets/targets and have not all been independently
+> benchmarked (see the Benchmarks note).
 
 ---
 
@@ -616,12 +651,25 @@ Benchmark results on Linux x86-64, release build, Criterion 100-sample runs:
 | RLE popcount — 24 ancillas | 4.71 ns | ~212M ops/s |
 | `analyze_file` + NullDecoder (10K frames) | 4.82 ms | ~2.07M frames/s |
 
+> ⚠️ **Needs rerun.** These figures are from an earlier run on unspecified
+> Linux x86-64 hardware and have not been re-measured against the current
+> `benches/` suite. Reproduce with `cargo bench --workspace` on your own machine
+> before citing them. The bench suite covers parse / validate / noise-sampler /
+> replay throughput; it does **not** yet include a decoder-latency benchmark, so
+> the decode-stage numbers elsewhere in this README (the Decoders table and the
+> d=5 performance budget) are design targets, not measured results.
+
 ---
 
 ## Format
 
 See [`spec/QSSF_FORMAT.md`](spec/QSSF_FORMAT.md) for the full QEC Syndrome
 Stream Format (QSSF) binary format specification.
+
+The untrusted parsing paths are exercised by libFuzzer targets under
+[`fuzz/`](fuzz/) — the frame-header parser, the Stim DEM parser, and the RLE
+decoder each have a fuzz target (run with `cargo fuzz run <target>`; CI compiles
+them on every change).
 
 ---
 
