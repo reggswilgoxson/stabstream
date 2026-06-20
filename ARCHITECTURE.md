@@ -28,40 +28,40 @@ stabstream automates this loop at hardware speed.
 flowchart LR
     subgraph src ["Syndrome Sources"]
         direction TB
-        HW["Quantum Hardware\n──────────────\nReal device\nvia TCP stream"]
-        SIM["Noise Simulator\n──────────────\nBernoulli sampling\nfrom .dem file"]
-        FILE["Recorded File\n──────────────\n.qssf\n.qssf.zst"]
+        HW["**Quantum Hardware**<br/>Real device via TCP"]
+        SIM["**Noise Simulator**<br/>Bernoulli sampling<br/>from .dem file"]
+        FILE["**Recorded File**<br/>.qssf / .qssf.zst"]
     end
 
-    subgraph parse ["① Parse\nstabstream-deserialize"]
-        PARSE["QSSF Frame Parser\n──────────────\nzero-copy ring buffer\nRLE detector events\n~600 ns / frame"]
+    subgraph parse ["1. Parse — stabstream-deserialize"]
+        PARSE["**QSSF Frame Parser**<br/>zero-copy ring buffer<br/>~600 ns / frame"]
     end
 
-    subgraph validate ["② Validate\nstabstream-validate"]
-        VAL["Integrity Checks\n──────────────\nCRC-32 checksum\nparity consistency\ntiming bounds"]
+    subgraph validate ["2. Validate — stabstream-validate"]
+        VAL["**Integrity Checks**<br/>CRC-32 · parity · timing"]
     end
 
-    subgraph buffer ["③ Buffer\nstabstream-core"]
-        WIN["Syndrome Window\n──────────────\nsliding N-round buffer\nrounds × ancillas matrix\nfed into decoder as a block"]
+    subgraph buffer ["3. Buffer — stabstream-core"]
+        WIN["**Syndrome Window**<br/>sliding N-round buffer<br/>rounds x ancillas matrix"]
     end
 
-    subgraph decode ["④ Decode\nstabstream-decoder"]
-        DEM["Error Model .dem\n──────────────\nspacetime graph\nfrom Stim DEM file\nedge weights −ln p÷1−p"]
-        UF["Union-Find\n──────────────\nO(n·α(n))  ~400 ns\nfast, near-optimal"]
-        MW["MWPM\n──────────────\nO(n log n)  ~4 µs\noptimal matching"]
+    subgraph decode ["4. Decode — stabstream-decoder"]
+        DEM["**Error Model .dem**<br/>spacetime graph<br/>edge weights -ln(p / 1-p)"]
+        UF["**Union-Find**<br/>O(n·alpha(n))  ~400 ns"]
+        MW["**MWPM**<br/>O(n log n)  ~4 us"]
         DEM --> UF & MW
     end
 
-    subgraph accum ["⑤ Accumulate\nstabstream-metrics"]
-        ACC["Logical Error Counter\n──────────────\npredicted ⊕ ground truth\nlock-free atomic counters\np_L = errors ÷ shots"]
+    subgraph accum ["5. Accumulate — stabstream-metrics"]
+        ACC["**Logical Error Counter**<br/>predicted XOR ground truth<br/>p_L = errors / shots"]
     end
 
     subgraph out ["Outputs"]
         direction TB
-        JSON["JSON Report\np_L · latency percentiles\nancilla fire frequencies"]
-        PLOT["SVG Threshold Plot\np_L vs code distance\nlocates threshold p*"]
-        DASH["Live TUI Dashboard\nreal-time ancilla\nfire-rate monitor"]
-        PY["Python / NumPy API\nzero-copy arrays\nPyMatching bridge"]
+        JSON["**JSON Report**<br/>p_L · latency percentiles"]
+        PLOT["**SVG Threshold Plot**<br/>p_L vs code distance"]
+        DASH["**Live TUI Dashboard**<br/>real-time ancilla fire rates"]
+        PY["**Python / NumPy API**<br/>zero-copy · PyMatching bridge"]
     end
 
     HW  -->|QSSF bytes| PARSE
@@ -98,48 +98,50 @@ Each crate has a single responsibility. The arrows show compile-time dependencie
 ```mermaid
 flowchart TD
     subgraph foundation ["Core Data Structures"]
-        CORE["stabstream-core\n─────────────────────\nSyndromeFrame  SyndromeWindow\nCodeType  HardwareSchema\nJSON hardware topology files"]
+        CORE["**stabstream-core**<br/>SyndromeFrame · SyndromeWindow<br/>CodeType · HardwareSchema"]
     end
 
     subgraph model ["Error Model"]
-        DEM["stabstream-dem\n─────────────────────\nStim DEM parser\nSpacetimeGraph builder\nedge weights from p"]
+        DEM["**stabstream-dem**<br/>Stim DEM parser<br/>SpacetimeGraph builder"]
     end
 
     subgraph ingestion ["Data Ingestion"]
-        DESER["stabstream-deserialize\n─────────────────────\nQSSF binary parser\nzero-copy ring buffer\nRLE codec  async stream"]
-        VAL["stabstream-validate\n─────────────────────\nCRC-32  parity checks\ntiming validation\nstrict schema mode"]
+        DESER["**stabstream-deserialize**<br/>QSSF binary parser<br/>zero-copy ring buffer"]
+        VAL["**stabstream-validate**<br/>CRC-32 · parity checks<br/>timing validation"]
     end
 
     subgraph decoding ["Decoding"]
-        DECODER["stabstream-decoder\n─────────────────────\nDecoder trait\nUnionFindDecoder\nFusionBlossomDecoder MWPM\nNullDecoder benchmark"]
+        DECODER["**stabstream-decoder**<br/>Decoder trait<br/>UnionFind · MWPM · Null"]
     end
 
     subgraph measurement ["Measurement"]
-        METRICS["stabstream-metrics\n─────────────────────\nLogicalErrorAccumulator\nLatency Histogram\nAnalysisReport JSON"]
+        METRICS["**stabstream-metrics**<br/>LogicalErrorAccumulator<br/>LatencyHistogram · AnalysisReport"]
     end
 
     subgraph applications ["Applications & Tools"]
-        SIM["stabstream-sim\n─────────────────────\nQSSF noise simulator\nBernoulli shot sampler\nTCP  broadcast  SHM"]
-        REPLAY["stabstream-replay\n─────────────────────\nzstd recording player\nStreamPlayer\nanalyze_file"]
-        ANALYZE["stabstream-analyze\n─────────────────────\noffline decode CLI\nreplays .qssf files\nprints JSON report"]
-        THRESH["stabstream-threshold\n─────────────────────\nthreshold sweep CLI\nparallel rayon workers\nSVG threshold plots"]
-        CONVERT["stabstream-convert\n─────────────────────\nQSSF  Stim converters\nobservable ground-truth\nML dataset export"]
-        DASH["dashboard\n─────────────────────\nratatui live TUI\nancilla fire rates\nconnects to TCP stream"]
+        SIM["**stabstream-sim**<br/>QSSF noise simulator<br/>TCP · broadcast · SHM"]
+        REPLAY["**stabstream-replay**<br/>zstd recording player<br/>StreamPlayer · analyze_file"]
+        ANALYZE["**stabstream-analyze**<br/>offline decode CLI<br/>prints JSON report"]
+        THRESH["**stabstream-threshold**<br/>threshold sweep CLI<br/>SVG threshold plots"]
+        CONVERT["**stabstream-convert**<br/>QSSF / Stim converters<br/>ML dataset export"]
+        DASH["**dashboard**<br/>ratatui live TUI<br/>ancilla fire rates"]
     end
 
     subgraph bindings ["Language Bindings"]
-        PY["stabstream-py\n─────────────────────\nPyO3  NumPy arrays\nDEM-to-PyMatching bridge\nvendor adapters"]
-        FFI["stabstream-ffi\n─────────────────────\ncbindgen C headers\nfor C/C++ integration"]
+        PY["**stabstream-py**<br/>PyO3 · NumPy arrays<br/>DEM-to-PyMatching bridge"]
+        FFI["**stabstream-ffi**<br/>cbindgen C headers<br/>for C/C++ integration"]
     end
 
-    CORE --> DESER
-    CORE --> VAL
-    CORE --> DEM
-    CORE --> DECODER
+    CORE --> DESER & VAL & DEM & DECODER
     DEM  --> DECODER
     DECODER --> METRICS
 
-    CORE & DESER & VAL & DEM & DECODER & METRICS --> REPLAY
+    CORE --> REPLAY
+    DESER --> REPLAY
+    VAL --> REPLAY
+    DEM --> REPLAY
+    DECODER --> REPLAY
+    METRICS --> REPLAY
     REPLAY --> ANALYZE
 
     CORE & DEM & DECODER & METRICS --> THRESH
@@ -161,19 +163,19 @@ Every QEC cycle produces one **QSSF frame** on the wire. Here is what is inside 
 flowchart LR
     subgraph stream ["QSSF Binary Stream"]
         direction LR
-        FH["File Header\n24 bytes  once per file\n────────────────\nmagic bytes  0x51535346\nformat version\nschema UUID\nancilla count"]
-        F1["Frame\n(one QEC cycle)"]
-        F2["Frame\n..."]
-        FN["Frame\n(one QEC cycle)"]
+        FH["**File Header**<br/>24 bytes · once per file<br/>magic 0x51535346 · schema UUID"]
+        F1["**Frame**<br/>one QEC cycle"]
+        F2["**Frame**<br/>..."]
+        FN["**Frame**<br/>one QEC cycle"]
         FH --> F1 --> F2 --> FN
     end
 
     subgraph frm ["Frame Contents"]
         direction LR
-        HDR["Frame Header\n36 bytes\n────────────────\nhardware_id\nancilla_count\ncycle_time ns\ntimestamp\nflags"]
-        PAY["Payload\nvariable length\n────────────────\nRLE detector events\nfired ancilla indices\n±1 measurement results"]
-        TLV["Metadata TLV\noptional key-value tags\n────────────────\ntag 0x10\nlogical observable flips\nground truth for scoring"]
-        TERM["Terminator\n2 bytes  0xDEAD"]
+        HDR["**Frame Header**<br/>36 bytes<br/>hardware_id · ancilla_count · timestamp"]
+        PAY["**Payload**<br/>variable length<br/>RLE detector events · ancilla indices"]
+        TLV["**Metadata TLV**<br/>optional key-value tags<br/>tag 0x10: logical observable flips"]
+        TERM["**Terminator**<br/>2 bytes 0xDEAD"]
         HDR --> PAY --> TLV --> TERM
     end
 
@@ -196,21 +198,21 @@ stabstream supports three ways to deliver QSSF frames to a consumer:
 
 ```mermaid
 flowchart LR
-    SRC["Syndrome\nSource\nHW or sim"]
+    SRC["**Syndrome Source**<br/>HW or sim"]
 
-    subgraph direct ["Direct  TCP"]
-        D["One-to-one\nTCP socket\nlowest setup"]
+    subgraph direct ["Direct TCP"]
+        D["**One-to-one**<br/>TCP socket<br/>lowest setup"]
     end
 
-    subgraph broadcast ["Broadcast  TCP"]
-        B["One-to-many\nTCP fan-out\nring buffer\nskip-on-overrun\nfor slow clients"]
+    subgraph broadcast ["Broadcast TCP"]
+        B["**One-to-many**<br/>TCP fan-out · ring buffer<br/>skip-on-overrun for slow clients"]
     end
 
-    subgraph shm ["Shared Memory  SHM"]
-        S["POSIX SHM ring\n/dev/shm/name\n50–200 ns latency\non-host IPC only\nlowest latency"]
+    subgraph shm ["Shared Memory SHM"]
+        S["**POSIX SHM ring**<br/>/dev/shm/name<br/>50-200 ns latency · on-host only"]
     end
 
-    ANALYZE["stabstream-analyze\nor custom consumer"]
+    ANALYZE["**stabstream-analyze**<br/>or custom consumer"]
 
     SRC -->|port 9000| D -->|QSSF frames| ANALYZE
     SRC -->|port 9000| B -->|QSSF frames| ANALYZE
@@ -225,41 +227,27 @@ and decoder run on the same host and latency matters.
 
 ## End-to-End Example Walk-Through
 
-```
-circuit.stim  ──stim analyze_errors──►  surface_d5.dem
-                                               │
-                                         ┌─────▼──────┐
-                                         │ stabstream- │
-                                         │    sim      │  ◄── --simulator native
-                                         │             │       --dem surface_d5.dem
-                                         └─────┬───────┘       --port 9000
-                                               │ QSSF frames (TCP)
-                                         ┌─────▼───────┐
-                                         │   ring buf  │  (stabstream-deserialize)
-                                         └─────┬───────┘
-                                               │ SyndromeFrame
-                                         ┌─────▼───────┐
-                                         │  validator  │  CRC + parity
-                                         └─────┬───────┘
-                                               │
-                                         ┌─────▼───────┐
-                                         │  syndrome   │  5 rounds × 24 ancillas
-                                         │   window    │  (stabstream-core)
-                                         └─────┬───────┘
-                                               │ detector matrix
-                                      ┌────────▼────────┐
-                     surface_d5.dem ──►  Union-Find      │  ~400 ns
-                     (SpacetimeGraph)  │  Decoder        │  (stabstream-decoder)
-                                      └────────┬────────┘
-                                               │ DecoderResult
-                                         ┌─────▼───────┐
-                                         │  accumulate │  predicted ⊕ truth
-                                         └─────┬───────┘
-                                               │
-                                         report.json
-                                         { "logical_error_rate": 3.1e-3,
-                                           "p50_decode_ns": 298,
-                                           "p99_decode_ns": 841 }
+```mermaid
+flowchart TD
+    STIM["**circuit.stim**<br/>Stim circuit file"]
+    DEM_FILE["**surface_d5.dem**<br/>stim analyze_errors output"]
+    SIM_NODE["**stabstream-sim**<br/>--simulator native --dem surface_d5.dem<br/>--port 9000"]
+    RINGBUF["**Ring Buffer**<br/>stabstream-deserialize<br/>QSSF frames via TCP"]
+    VALID["**Validator**<br/>CRC-32 + parity checks"]
+    WINDOW["**Syndrome Window**<br/>stabstream-core<br/>5 rounds x 24 ancillas"]
+    DECODE_NODE["**Union-Find Decoder**<br/>stabstream-decoder<br/>SpacetimeGraph from surface_d5.dem · ~400 ns"]
+    ACCUM["**Accumulate**<br/>stabstream-metrics<br/>predicted XOR ground truth"]
+    REPORT["**report.json**<br/>logical_error_rate: 3.1e-3<br/>p50_decode_ns: 298 · p99_decode_ns: 841"]
+
+    STIM -->|stim analyze_errors| DEM_FILE
+    DEM_FILE --> SIM_NODE
+    SIM_NODE -->|QSSF frames TCP| RINGBUF
+    RINGBUF -->|SyndromeFrame| VALID
+    VALID -->|validated frame| WINDOW
+    WINDOW -->|detector matrix| DECODE_NODE
+    DEM_FILE -->|SpacetimeGraph| DECODE_NODE
+    DECODE_NODE -->|DecoderResult| ACCUM
+    ACCUM --> REPORT
 ```
 
 ---
