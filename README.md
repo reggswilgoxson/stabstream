@@ -450,7 +450,7 @@ QSSF stream (file or TCP)
         │
         ▼
   stabstream.open() / from_stim_circuit()    ← Python entry points
-  (zero-copy parse, ~600 ns/frame)
+  (sync frame parse: ~97 ns; full async QssfStream: ~1.6 µs incl. ring-buffer setup)
         │
         ▼
   SyndromeWindow                             ← sliding rounds × ancillas matrix
@@ -511,17 +511,23 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 
 **Performance budget for d=5 surface code (24 ancillas, 1.1 µs cycle):**
 
-| Stage | Budget | Status |
-|-------|--------|--------|
-| Frame deserialization | 200 ns | Implemented (parse benched at ~600 ns; needs rerun) |
-| CRC validation | 70 ns | Implemented |
-| Window slide | 20 ns | Implemented |
-| UF decode | 400 ns | Implemented (not yet benchmarked) |
-| **Total** | **~740 ns** | **design target, < 1 µs deadline** |
+| Stage | Budget | Measured | Status |
+|-------|--------|----------|--------|
+| Frame parse (inc. CRC) | 200 ns | **97 ns** | ✓ 2.1× under |
+| └─ CRC hash (sub-cost) | 70 ns | **63 ns** | — included in parse |
+| Window slide | 20 ns | **108 ns** | ✗ 5.4× over budget |
+| UF decode | 400 ns | N/A | not yet benchmarked |
+| **Total (measured stages)** | **620 ns** | **~205 ns** | **✓ well under** |
+| **Est. total (with UF budget)** | **620 ns** | **~605 ns** | **✓ < 1 µs deadline** |
 
-> "Implemented" means the stage exists and is covered by the test suite; the
-> latency figures are budgets/targets and have not all been independently
-> benchmarked (see the Benchmarks note).
+> Measured on Windows 10 x64, release build, Criterion 100-sample runs (d=5
+> synthetic surface code stream, single frame). CRC is a sub-cost already
+> included in the frame parse time, not an additive pipeline stage. Window
+> slide exceeds its original 20 ns budget: `rebuild_matrix` copies 120 bools
+> on every push — incremental rebuild would fix this. UF decode is not yet
+> benchmarked; the 400 ns figure is the design target. Run
+> `cargo bench -p stabstream-benches` to reproduce — a summary table prints
+> at the end of the suite.
 
 ---
 
@@ -641,23 +647,27 @@ qLDPC families with optional fields:
 
 ## Benchmarks
 
-Benchmark results on Linux x86-64, release build, Criterion 100-sample runs:
+Results on Windows 10 x64, release build, Criterion 100-sample runs.
+Reproduce with `cargo bench -p stabstream-benches`; a formatted summary table
+prints at the end of the suite.
 
-| Benchmark | Median latency | Throughput |
-|---|---|---|
-| Parse only (validation disabled) | 599.8 ns | ~1.67M frames/s |
-| CRC validation | 669.7 ns | ~1.49M frames/s |
-| Strict parity validation | 601.7 ns | ~1.66M frames/s |
-| RLE popcount — 24 ancillas | 4.71 ns | ~212M ops/s |
-| `analyze_file` + NullDecoder (10K frames) | 4.82 ms | ~2.07M frames/s |
+| Benchmark | Median | Notes |
+|-----------|--------|-------|
+| `parse/frame_header_sync` | **97 ns** | Pure deserialization: 36-byte field parse + CRC32 |
+| `parse/crc32_frame_header_32b` | **63 ns** | CRC32 hash alone (sub-cost of the above) |
+| `parse/full_frame_sync` | **84 ns** | File header + frame header + payload slice offsets |
+| `parse/stream_async` | **1.6 µs** | Full async `QssfStream` incl. ring-buffer allocation |
+| `window_slide/push_owned_steady_state_d5` | **108 ns** | Steady-state slide: VecDeque evict + matrix rebuild |
+| `window_slide/push_with_rle_decode_d5` | **218 ns** | Slide + RLE decode from borrowed `SyndromeFrame` |
+| `validate/rle_popcount_24_ancillas` | **6 ns** | RLE popcount micro-benchmark |
+| `replay_throughput/analyze_10k_frames_null_decoder` | **487 ns/frame** | Full replay pipeline, null decoder, 10 k frames |
+| `noise_sampler/rle_encode_24_ancillas` | **81 ns** | RLE encode 24 ancillas |
 
-> ⚠️ **Needs rerun.** These figures are from an earlier run on unspecified
-> Linux x86-64 hardware and have not been re-measured against the current
-> `benches/` suite. Reproduce with `cargo bench --workspace` on your own machine
-> before citing them. The bench suite covers parse / validate / noise-sampler /
-> replay throughput; it does **not** yet include a decoder-latency benchmark, so
-> the decode-stage numbers elsewhere in this README (the Decoders table and the
-> d=5 performance budget) are design targets, not measured results.
+> The 1.6 µs `stream_async` figure includes ring-buffer allocation and tokio
+> scheduler overhead — not raw parse cost. Pure frame deserialization
+> (`frame_header_sync`) is 97 ns. The bench suite does not yet include a
+> decoder-latency benchmark; the 400 ns UF decode figure in the d=5 budget
+> table above is a design target.
 
 ---
 

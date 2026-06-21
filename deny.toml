@@ -20,9 +20,11 @@ ignore = [
     "RUSTSEC-2024-0375",
     # instant crate unmaintained — indirect dep via criterion
     "RUSTSEC-2024-0436",
-    # pyo3 0.21.2 PyString::from_object nul-byte issue — upgrading pyo3 requires
-    # breaking API changes to stabstream-py; tracked for future upgrade
-    "RUSTSEC-2025-0020",
+    # pyo3 0.28: PyCFunction::new_closure missing Sync bound (RUSTSEC-2026-0176)
+    # and related closure thread-safety issue (RUSTSEC-2026-0177) — fixed in
+    # pyo3 0.29.0; upgrade tracked in issue #50 scope
+    "RUSTSEC-2026-0176",
+    "RUSTSEC-2026-0177",
 ]
 
 [bans]

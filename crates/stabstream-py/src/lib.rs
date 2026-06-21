@@ -448,12 +448,12 @@ impl PySyndromeWindow {
         let ancillas = self.inner.ancilla_count;
         if rounds == 0 {
             let arr = Array2::<bool>::default((0, ancillas));
-            return Ok(arr.into_pyarray(py));
+            return Ok(PyArray2::from_owned_array(py, arr));
         }
         let flat = self.inner.detector_matrix().to_vec();
         let arr = Array2::from_shape_vec((rounds, ancillas), flat)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(arr.into_pyarray(py))
+        Ok(PyArray2::from_owned_array(py, arr))
     }
 
     /// Push detector events directly from a 1-D NumPy bool array.
