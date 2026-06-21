@@ -68,7 +68,11 @@ fn bench_parse_surface_d5(c: &mut Criterion) {
                     };
                     let mut stream = QssfStream::new(reader, config);
                     criterion::black_box(
-                        stream.next_frame().await.unwrap().map(|f| f.header.frame_id),
+                        stream
+                            .next_frame()
+                            .await
+                            .unwrap()
+                            .map(|f| f.header.frame_id),
                     )
                 })
             },

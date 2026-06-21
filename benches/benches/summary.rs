@@ -35,7 +35,9 @@ fn read_median_ns(target: &Path, group: &str, bench: &str) -> Option<f64> {
     let pe_start = after.find("\"point_estimate\":")?;
     let value_str = after[pe_start + 17..].trim_start_matches([' ', '\n', '\r', '\t']);
     let end = value_str
-        .find(|c: char| c != '.' && !c.is_ascii_digit() && c != 'e' && c != 'E' && c != '+' && c != '-')
+        .find(|c: char| {
+            c != '.' && !c.is_ascii_digit() && c != 'e' && c != 'E' && c != '+' && c != '-'
+        })
         .unwrap_or(value_str.len());
     value_str[..end].parse().ok()
 }
@@ -93,7 +95,10 @@ fn main() {
     println!("  stabstream · d=5 surface code · 24 ancillas · pipeline summary");
     println!("{sep_wide}");
     println!();
-    println!("  {:<30}  {:>8}  {:>8}    {}", "Stage", "Budget", "Measured", "Status");
+    println!(
+        "  {:<30}  {:>8}  {:>8}    {}",
+        "Stage", "Budget", "Measured", "Status"
+    );
     println!("  {sep_thin}");
 
     print_row("Frame parse (inc. CRC)", 200.0, parse_ns, false);
@@ -152,10 +157,7 @@ fn main() {
                 "  ⚠  window_slide is {:.1}× over its 20 ns budget.",
                 s / 20.0
             );
-            println!(
-                "     rebuild_matrix copies {} bools on every push.",
-                5 * 24
-            );
+            println!("     rebuild_matrix copies {} bools on every push.", 5 * 24);
             println!("     Incremental or lazy rebuild would recover this budget.");
             any_warn = true;
         }
