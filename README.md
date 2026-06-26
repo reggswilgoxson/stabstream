@@ -476,11 +476,11 @@ Chromobius, and Tesseract are in `stabstream.decoders` (see
 
 | Decoder | Feature flag | Algorithm | Latency target (d=5) | p_L quality |
 |---------|-------------|-----------|----------------------|-------------|
-| `UnionFindDecoder` | *(default)* | Union-Find O(n·α(n)) | < 400 ns | Near-optimal |
+| `UnionFindDecoder` | *(default)* | Union-Find O(n·α(n)) | 2.74 µs measured (400 ns target) | Near-optimal |
 | `FusionBlossomDecoder` | `mwpm` | Fusion Blossom MWPM | ~4 µs | Optimal |
 
-> The latency column states design targets, not benchmarked numbers — there is no
-> decoder-latency benchmark in `benches/` yet (see the Benchmarks note below).
+> Latency measured via `cargo bench -p stabstream-benches --bench uf_decode`
+> (see the Benchmarks section below for full results).
 
 ### Native Union-Find Decoder
 
@@ -516,16 +516,17 @@ println!("mean p_L = {:.4e}", acc.mean_logical_error_rate());
 | Frame parse (inc. CRC) | 200 ns | **97 ns** | ✓ 2.1× under |
 | └─ CRC hash (sub-cost) | 70 ns | **63 ns** | — included in parse |
 | Window slide | 20 ns | **108 ns** | ✗ 5.4× over budget |
-| UF decode | 400 ns | N/A | not yet benchmarked |
-| **Total (measured stages)** | **620 ns** | **~205 ns** | **✓ well under** |
-| **Est. total (with UF budget)** | **620 ns** | **~605 ns** | **✓ < 1 µs deadline** |
+| UF decode | 400 ns | **2.74 µs** | ✗ 6.8× over budget |
+| **Total (parse + slide + UF)** | **620 ns** | **~2.94 µs** | **✗ exceeds 1 µs deadline** |
 
-> Measured on Windows 10 x64, release build, Criterion 100-sample runs (d=5
-> synthetic surface code stream, single frame). CRC is a sub-cost already
-> included in the frame parse time, not an additive pipeline stage. Window
-> slide exceeds its original 20 ns budget: `rebuild_matrix` copies 120 bools
-> on every push — incremental rebuild would fix this. UF decode is not yet
-> benchmarked; the 400 ns figure is the design target. Run
+> Parse and window-slide figures measured on Windows 10 x64, release build,
+> Criterion 100-sample runs. UF decode measured on Linux x64, release build,
+> Criterion 100-sample runs (`uf_decode/decode_window_d5_steady_state`: 5-round
+> chain-of-chains DEM, 120 detector nodes, 221 edges, ~5% fire rate). CRC is a
+> sub-cost already included in the frame parse time, not an additive pipeline
+> stage. Window slide and UF decode both exceed budget: `rebuild_matrix` copies
+> 120 bools on every push; the UF loop iterates up to `node_count` rounds over
+> all edges — both are known optimisation targets. Run
 > `cargo bench -p stabstream-benches` to reproduce — a summary table prints
 > at the end of the suite.
 
@@ -647,7 +648,8 @@ qLDPC families with optional fields:
 
 ## Benchmarks
 
-Results on Windows 10 x64, release build, Criterion 100-sample runs.
+Parse/validate/replay figures: Windows 10 x64, release build, Criterion 100-sample runs.
+UF decode figure: Linux x64, release build, Criterion 100-sample runs.
 Reproduce with `cargo bench -p stabstream-benches`; a formatted summary table
 prints at the end of the suite.
 
@@ -662,12 +664,14 @@ prints at the end of the suite.
 | `validate/rle_popcount_24_ancillas` | **6 ns** | RLE popcount micro-benchmark |
 | `replay_throughput/analyze_10k_frames_null_decoder` | **487 ns/frame** | Full replay pipeline, null decoder, 10 k frames |
 | `noise_sampler/rle_encode_24_ancillas` | **81 ns** | RLE encode 24 ancillas |
+| `uf_decode/decode_window_d5_steady_state` | **2.74 µs** | UF decode: 120-node d=5 graph, 24 ancillas × 5 rounds, ~5% fire rate |
 
 > The 1.6 µs `stream_async` figure includes ring-buffer allocation and tokio
 > scheduler overhead — not raw parse cost. Pure frame deserialization
-> (`frame_header_sync`) is 97 ns. The bench suite does not yet include a
-> decoder-latency benchmark; the 400 ns UF decode figure in the d=5 budget
-> table above is a design target.
+> (`frame_header_sync`) is 97 ns. The 2.74 µs UF decode uses a chain-of-chains
+> DEM (5 rounds × 24 ancillas, 221 edges); the decoder's `max_rounds` bound
+> iterates up to `node_count` times — incremental convergence detection is a
+> known optimisation target.
 
 ---
 

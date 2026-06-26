@@ -28,6 +28,10 @@ harness = false
 name    = "window_slide"
 harness = false
 
+[[bench]]
+name    = "uf_decode"
+harness = false
+
 # Must be last so it runs after all other bench targets have written their results.
 [[bench]]
 name    = "summary"
@@ -39,6 +43,7 @@ stabstream-deserialize = { path = "../crates/stabstream-deserialize" }
 stabstream-validate    = { path = "../crates/stabstream-validate" }
 stabstream-replay      = { path = "../crates/stabstream-replay" }
 stabstream-decoder     = { path = "../crates/stabstream-decoder" }
+stabstream-dem         = { path = "../crates/stabstream-dem" }
 tokio.workspace        = true
 crc32fast.workspace    = true
 serde_json.workspace   = true

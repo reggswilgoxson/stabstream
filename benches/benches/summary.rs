@@ -85,6 +85,7 @@ fn main() {
     let parse_ns = read_median_ns(&target, "parse", "frame_header_sync");
     let crc_ns = read_median_ns(&target, "parse", "crc32_frame_header_32b");
     let slide_ns = read_median_ns(&target, "window_slide", "push_owned_steady_state_d5");
+    let uf_ns = read_median_ns(&target, "uf_decode", "decode_window_d5_steady_state");
 
     const UF_BUDGET_NS: f64 = 400.0;
     let sep_wide: String = "═".repeat(72);
@@ -104,30 +105,38 @@ fn main() {
     print_row("Frame parse (inc. CRC)", 200.0, parse_ns, false);
     print_row("  └─ CRC hash (sub-cost)", 70.0, crc_ns, true);
     print_row("Window slide (push_owned)", 20.0, slide_ns, false);
-    print_row("UF decode", UF_BUDGET_NS, None, false);
+    print_row("UF decode", UF_BUDGET_NS, uf_ns, false);
 
     println!("  {sep_thin}");
 
     // Totals: CRC is a sub-cost of parse, not additive.
     // Pipeline budget: parse(200) + slide(20) + decode(400) = 620 ns.
     let measured_subtotal = parse_ns.and_then(|p| slide_ns.map(|s| p + s));
-    let estimated_total = measured_subtotal.map(|m| m + UF_BUDGET_NS);
+    let full_total = measured_subtotal.and_then(|sub| uf_ns.map(|u| sub + u));
+    let estimated_total = full_total.or_else(|| measured_subtotal.map(|m| m + UF_BUDGET_NS));
     const PIPELINE_BUDGET_NS: f64 = 620.0; // 200 + 20 + 400
 
-    if let Some(sub) = measured_subtotal {
-        let status = if sub <= PIPELINE_BUDGET_NS {
-            format!("✓  {:.1}× under budget", PIPELINE_BUDGET_NS / sub)
-        } else {
-            format!("✗  {:.1}× over budget", sub / PIPELINE_BUDGET_NS)
-        };
-        println!(
-            "  {:<30}  {:>8}  {:>8}    {}",
-            "Measured sub-total (no UF)",
-            fmt_ns(PIPELINE_BUDGET_NS),
-            fmt_ns(sub),
-            status
-        );
+    if full_total.is_none() {
+        if let Some(sub) = measured_subtotal {
+            let status = if sub <= PIPELINE_BUDGET_NS {
+                format!("✓  {:.1}× under budget", PIPELINE_BUDGET_NS / sub)
+            } else {
+                format!("✗  {:.1}× over budget", sub / PIPELINE_BUDGET_NS)
+            };
+            println!(
+                "  {:<30}  {:>8}  {:>8}    {}",
+                "Measured sub-total (no UF)",
+                fmt_ns(PIPELINE_BUDGET_NS),
+                fmt_ns(sub),
+                status
+            );
+        }
     }
+    let total_label = if full_total.is_some() {
+        "Total (parse + slide + UF)"
+    } else {
+        "Est. total (with UF budget)"
+    };
     if let Some(est) = estimated_total {
         let status = if est < 1_000.0 {
             "✓  < 1 µs deadline".to_string()
@@ -136,7 +145,7 @@ fn main() {
         };
         println!(
             "  {:<30}  {:>8}  {:>8}    {}",
-            "Est. total (with UF budget)",
+            total_label,
             fmt_ns(PIPELINE_BUDGET_NS),
             fmt_ns(est),
             status
