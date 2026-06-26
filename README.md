@@ -12,7 +12,7 @@
 </p>
 
 A high-performance, hardware-agnostic QEC (quantum error correction) syndrome
-stream deserializer and low-latency decoding runtime written in Rust, with Python
+stream deserializer and low-latency pipeline written in Rust, with Python
 bindings (PyO3 + NumPy) and C FFI.
 
 Stabstream parses QSSF frames, runs a native Union-Find decoder in O(n·α(n)) time,
@@ -35,7 +35,7 @@ expose a zero-config `from_stim_circuit` entry point, zero-copy NumPy arrays, an
 
 ## Mission
 
-Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone. Stabstream is the software designed to live in that window. It receives a stream of error signals (from a simulator today, and from hardware once such streams are exposed), figures out what went wrong using a built-in decoder, and hands back a correction. It aims to work with any quantum processor and to speak directly to the chips and FPGAs that sit closest to the hardware (via the C FFI and shared-memory transport), scaling from a laptop experiment toward a control-system deployment without changing a line of research code.
+Quantum computers make mistakes — a lot of them. To run useful computations, they need a companion system that watches for errors and issues corrections fast enough that the errors don't pile up. That window is measured in **microseconds**: too slow, and the quantum state is already gone. Stabstream is the software designed to live in that window. It receives a stream of error signals (from a simulator today, and from hardware once such streams are exposed), figures out what went wrong using a built-in or plugged in decoder, and hands back a correction. It aims to work with any quantum processor and to speak directly to the chips and FPGAs that sit closest to the hardware (via the C FFI and shared-memory transport), scaling from a laptop experiment toward a control-system deployment without changing a line of research code.
 
 ---
 
