@@ -26,7 +26,7 @@ pyo3::create_exception!(stabstream, StabstreamError, pyo3::exceptions::PyExcepti
 // PyCodeType
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "CodeType", from_py_object)]
+#[pyclass(name = "CodeType")]
 #[derive(Clone)]
 pub struct PyCodeType {
     inner: CodeType,
@@ -99,7 +99,7 @@ impl PyCodeType {
 // PyLogicalCorrection / PyDecoderResult
 // ---------------------------------------------------------------------------
 
-#[pyclass(name = "LogicalCorrection", from_py_object)]
+#[pyclass(name = "LogicalCorrection")]
 #[derive(Clone)]
 pub struct PyLogicalCorrection {
     #[pyo3(get)]
