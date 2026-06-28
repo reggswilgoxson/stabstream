@@ -119,7 +119,7 @@ impl UnionFindDecoder {
 
     /// Core decode: given a list of active (fired) detector node indices,
     /// return a bitmask of which observables are flipped.
-    fn decode_active(&self, active: &[u32]) -> u64 {
+    pub fn decode_active(&self, active: &[u32]) -> u64 {
         let node_count = self.graph.nodes.len();
         let boundary = self.graph.boundary_node as u32;
 

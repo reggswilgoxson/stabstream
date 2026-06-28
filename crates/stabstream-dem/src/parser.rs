@@ -199,16 +199,18 @@ fn parse_error_line(line: &str) -> Result<DemError, ParseError> {
     let mut after_caret = false;
 
     for token in rest.split_whitespace() {
+        // ^ is a decomposition separator in Stim DEM (not an observable marker).
+        // Classify every target by prefix: D<id> → detector, L<id> → observable.
         if token == "^" {
             after_caret = true;
             continue;
         }
-        if after_caret {
-            let id = parse_observable_target(token)?;
+        if let Some(id) = token.strip_prefix('L').and_then(|n| n.parse::<u8>().ok()) {
             observables.push(id);
-        } else {
-            let id = parse_detector_target(token)?;
+        } else if let Some(id) = token.strip_prefix('D').and_then(|n| n.parse::<u32>().ok()) {
             detectors.push(id);
+        } else {
+            return Err(ParseError::MalformedTarget(token.to_string()));
         }
     }
 
