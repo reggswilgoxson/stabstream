@@ -887,7 +887,9 @@ impl PyUnionFindDecoder {
             .enumerate()
             .filter_map(|(i, &b)| if b { Some(i as u32) } else { None })
             .collect();
-        Ok(PyDecoderResult::from_rust(self.inner_decode_indices(&active)))
+        Ok(PyDecoderResult::from_rust(
+            self.inner_decode_indices(&active),
+        ))
     }
 
     /// Decode using a sparse list of fired detector indices (fastest path).
@@ -907,7 +909,9 @@ impl PyUnionFindDecoder {
             let active: Vec<u32> = (0..cols)
                 .filter_map(|j| if arr[[i, j]] { Some(j as u32) } else { None })
                 .collect();
-            out.push(PyDecoderResult::from_rust(self.inner_decode_indices(&active)));
+            out.push(PyDecoderResult::from_rust(
+                self.inner_decode_indices(&active),
+            ));
         }
         Ok(out)
     }

@@ -269,7 +269,6 @@ fn parse_observable_id(line: &str) -> Option<u8> {
         .find_map(|tok| tok.strip_prefix('L').and_then(|n| n.parse::<u8>().ok()))
 }
 
-
 fn parse_repeat_count(line: &str) -> Result<u64, ParseError> {
     // repeat N {
     let rest = line.strip_prefix("repeat").unwrap().trim();
