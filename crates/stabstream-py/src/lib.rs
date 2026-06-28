@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyIOError, PyImportError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PySet};
@@ -856,6 +856,95 @@ impl PyStabstreamStream {
 }
 
 // ---------------------------------------------------------------------------
+// PyUnionFindDecoder
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "UnionFindDecoder")]
+pub struct PyUnionFindDecoder {
+    inner: UnionFindDecoder,
+}
+
+#[pymethods]
+impl PyUnionFindDecoder {
+    #[new]
+    fn new(dem: &PyDetectorErrorModel) -> PyResult<Self> {
+        let graph = Arc::new(SpacetimeGraph::from_dem(&dem.inner));
+        Ok(Self {
+            inner: UnionFindDecoder::new(graph),
+        })
+    }
+
+    /// Decode a single syndrome window given as a 2-D bool matrix.
+    ///
+    /// Parameters
+    /// ----------
+    /// matrix : ndarray[bool]
+    ///     Shape ``(rounds, ancilla_count)`` or ``(1, total_detectors)``.
+    fn decode(&self, matrix: PyReadonlyArray2<bool>) -> PyResult<PyDecoderResult> {
+        let arr = matrix.as_array();
+        let active: Vec<u32> = arr
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &b)| if b { Some(i as u32) } else { None })
+            .collect();
+        Ok(PyDecoderResult::from_rust(
+            self.inner_decode_indices(&active),
+        ))
+    }
+
+    /// Decode using a sparse list of fired detector indices (fastest path).
+    fn decode_sparse(&self, indices: Vec<u32>) -> PyResult<PyDecoderResult> {
+        Ok(PyDecoderResult::from_rust(
+            self.inner_decode_indices(&indices),
+        ))
+    }
+
+    /// Decode a batch of shots given as a 2-D array of shape ``(shots, detectors)``.
+    fn decode_batch(&self, matrices: PyReadonlyArray2<bool>) -> PyResult<Vec<PyDecoderResult>> {
+        let arr = matrices.as_array();
+        let shots = arr.nrows();
+        let cols = arr.ncols();
+        let mut out = Vec::with_capacity(shots);
+        for i in 0..shots {
+            let active: Vec<u32> = (0..cols)
+                .filter_map(|j| if arr[[i, j]] { Some(j as u32) } else { None })
+                .collect();
+            out.push(PyDecoderResult::from_rust(
+                self.inner_decode_indices(&active),
+            ));
+        }
+        Ok(out)
+    }
+
+    fn __repr__(&self) -> String {
+        "UnionFindDecoder()".to_string()
+    }
+}
+
+impl PyUnionFindDecoder {
+    fn inner_decode_indices(&self, active: &[u32]) -> DecoderResult {
+        if active.is_empty() {
+            return DecoderResult::empty();
+        }
+        let observable_flips = self.inner.decode_active(active);
+        let mut corrections = Vec::new();
+        for bit in 0..64u8 {
+            if observable_flips & (1u64 << bit) != 0 {
+                corrections.push(LogicalCorrection {
+                    logical_id: bit,
+                    pauli: PauliOp::Z,
+                });
+            }
+        }
+        DecoderResult {
+            corrections,
+            confidence: 0.9,
+            observable_flips,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SpacetimeGraph Python wrapper (read-only inspection)
 // ---------------------------------------------------------------------------
 
@@ -906,6 +995,7 @@ fn stabstream_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLogicalCorrection>()?;
     m.add_class::<PyDetectorErrorModel>()?;
     m.add_class::<PySpacetimeGraph>()?;
+    m.add_class::<PyUnionFindDecoder>()?;
     m.add_class::<PyLogicalErrorAccumulator>()?;
     m.add("StabstreamError", py.get_type::<StabstreamError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

@@ -42,6 +42,8 @@ except ModuleNotFoundError:
     StabstreamError = Exception  # fallback so type annotations don't crash
 
 from stabstream.io import load_qssf, read_qssf, load_qssf_windows, load_dataset  # noqa: F401
+from stabstream.sim import simulate_circuit_to_qssf, simulate_dem_to_qssf, realtime_stream  # noqa: F401
+from stabstream.replay import ReplayStream  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

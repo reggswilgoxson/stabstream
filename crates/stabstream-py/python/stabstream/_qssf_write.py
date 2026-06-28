@@ -49,12 +49,23 @@ def _rle_encode(events: list[bool]) -> bytes:
     return bytes(out)
 
 
+_TAG_OBSERVABLE_FLIPS: int = 0x0010
+
+
+def _tlv_observable_flips(obs: int) -> bytes:
+    """Encode observable_flips as a TLV metadata block (tag 0x0010, u64-LE)."""
+    val = struct.pack("<Q", obs & 0xFFFFFFFFFFFFFFFF)
+    # tag_count(u16) + tag(u16) + len(u16) + value(8)
+    return struct.pack("<HHH", 1, _TAG_OBSERVABLE_FLIPS, 8) + val
+
+
 def _frame_header(
     frame_id: int,
     round_no: int,
     ancilla_count: int,
     payload_len: int,
     timestamp_ns: int,
+    flags: int = 0,
 ) -> bytes:
     buf = bytearray(36)
     struct.pack_into("<Q", buf, 0, frame_id)
@@ -65,7 +76,7 @@ def _frame_header(
     struct.pack_into("<I", buf, 24, payload_len)
     buf[28] = _CODE_TYPE_GENERIC
     buf[29] = 0                                     # distance
-    struct.pack_into("<H", buf, 30, 0)              # flags
+    struct.pack_into("<H", buf, 30, flags)
     crc = zlib.crc32(bytes(buf[:32])) & 0xFFFFFFFF
     struct.pack_into("<I", buf, 32, crc)
     return bytes(buf)
@@ -109,18 +120,26 @@ def write_qssf(path: str, frames: Iterator[dict], schema_uuid: bytes | None = No
             frame_id: int = int(frame["frame_id"])
             round_no: int = int(frame["round"])
             timestamp_ns: int = int(time.time_ns())
+            obs: int | None = frame.get("observable_flips")
 
             rle = _rle_encode(events)
             meas = bytes(0xFF if e else 0x01 for e in events)
-            payload_len = 2 + len(rle) + ancilla_count
+            tlv = _tlv_observable_flips(obs) if obs is not None else b""
+            flags = 0x04 if tlv else 0
+            payload_len = 2 + len(rle) + ancilla_count + len(tlv)
 
-            hdr = _frame_header(frame_id, round_no, ancilla_count, payload_len, timestamp_ns)
+            hdr = _frame_header(
+                frame_id, round_no, ancilla_count, payload_len, timestamp_ns,
+                flags=flags,
+            )
             frame_crc = zlib.crc32(hdr) & 0xFFFFFFFF
 
             fh.write(hdr)
             fh.write(struct.pack("<H", len(rle)))
             fh.write(rle)
             fh.write(meas)
+            if tlv:
+                fh.write(tlv)
             fh.write(struct.pack("<H", 0xFFFF))
             fh.write(struct.pack("<I", frame_crc))
             n_written += 1

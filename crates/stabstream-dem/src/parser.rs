@@ -196,19 +196,19 @@ fn parse_error_line(line: &str) -> Result<DemError, ParseError> {
 
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
-    let mut after_caret = false;
 
     for token in rest.split_whitespace() {
+        // ^ is a decomposition separator in Stim DEM (not an observable marker).
+        // Classify every target by prefix: D<id> → detector, L<id> → observable.
         if token == "^" {
-            after_caret = true;
             continue;
         }
-        if after_caret {
-            let id = parse_observable_target(token)?;
+        if let Some(id) = token.strip_prefix('L').and_then(|n| n.parse::<u8>().ok()) {
             observables.push(id);
-        } else {
-            let id = parse_detector_target(token)?;
+        } else if let Some(id) = token.strip_prefix('D').and_then(|n| n.parse::<u32>().ok()) {
             detectors.push(id);
+        } else {
+            return Err(ParseError::MalformedTarget(token.to_string()));
         }
     }
 
@@ -267,20 +267,6 @@ fn parse_observable_id(line: &str) -> Option<u8> {
     // logical_observable[(x, y)] L<id>
     line.split_whitespace()
         .find_map(|tok| tok.strip_prefix('L').and_then(|n| n.parse::<u8>().ok()))
-}
-
-fn parse_detector_target(token: &str) -> Result<u32, ParseError> {
-    token
-        .strip_prefix('D')
-        .and_then(|n| n.parse::<u32>().ok())
-        .ok_or_else(|| ParseError::MalformedTarget(token.to_string()))
-}
-
-fn parse_observable_target(token: &str) -> Result<u8, ParseError> {
-    token
-        .strip_prefix('L')
-        .and_then(|n| n.parse::<u8>().ok())
-        .ok_or_else(|| ParseError::MalformedTarget(token.to_string()))
 }
 
 fn parse_repeat_count(line: &str) -> Result<u64, ParseError> {
