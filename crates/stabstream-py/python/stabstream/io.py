@@ -16,6 +16,14 @@ load_qssf_batch(path, batch_size)
     Yields 2-D NumPy arrays of shape ``(batch_size, ancilla_count)`` — suited
     for batched ML inference pipelines that expect matrix inputs.
 
+load_qssf_windows(path, window_depth)
+    Generator of ``SyndromeWindow`` objects.  Frames are pushed into a
+    non-overlapping rolling window; each full window is yielded and evicted.
+
+load_dataset(path)
+    Load a QSSF recording into a dict with keys ``"frames"``,
+    ``"detector_matrix"``, and ``"observable_flips"``.
+
 Examples
 --------
 Iterate over frames::
@@ -38,6 +46,18 @@ Batched NumPy::
     for batch in load_qssf_batch("data.qssf", batch_size=256):
         # batch.shape == (256, ancilla_count), dtype=bool
         predictions = model.predict(batch)
+
+Syndrome windows::
+
+    from stabstream.io import load_qssf_windows
+    for win in load_qssf_windows("data.qssf", window_depth=5):
+        matrix = win.to_numpy_matrix()  # shape (5, ancilla_count)
+
+Dataset dict::
+
+    from stabstream.io import load_dataset
+    ds = load_dataset("data.qssf")
+    X, y = ds["detector_matrix"], ds["observable_flips"]
 """
 
 from __future__ import annotations
@@ -50,7 +70,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 if TYPE_CHECKING:
-    from stabstream._stabstream import SyndromeFrame
+    from stabstream._stabstream import SyndromeFrame, SyndromeWindow
 
 
 def load_qssf(path: str) -> "Iterator[SyndromeFrame]":
@@ -175,186 +195,97 @@ def load_qssf_batch(
 def load_qssf_windows(
     path: str,
     window_depth: int,
-    batch_size: int = 256,
-    *,
-    with_labels: bool = False,
-) -> "Generator[np.ndarray | tuple[np.ndarray, np.ndarray], None, None]":
+) -> "Iterator[SyndromeWindow]":
     """
-    Yield batches of multi-round syndrome windows for ML training/inference.
+    Yield ``SyndromeWindow`` objects from a QSSF file.
 
-    Each batch is a NumPy array of shape
-    ``(batch_size, window_depth, ancilla_count)`` with dtype ``bool``.
-    Frames with a mismatched ``ancilla_count`` are silently dropped.
+    Frames are pushed into a rolling window of depth ``window_depth``.
+    Each time the window is full it is yielded and evicted so that
+    consecutive windows are non-overlapping.
 
     Parameters
     ----------
     path:
         Filesystem path or TCP URI accepted by ``load_qssf``.
     window_depth:
-        Number of rounds per window (temporal depth).  Equivalent to the
-        ``window_depth`` argument of ``stabstream.SyndromeWindow``.
-    batch_size:
-        Number of windows per yielded array.  The final batch may be
-        smaller.
-    with_labels:
-        If True, yield ``(X, y)`` tuples where ``y`` is a
-        ``(batch_size,)`` uint64 array of observable flip bitmasks read
-        from QSSF metadata tag 0x10.  Frames without ground truth
-        contribute ``y=0``.
+        Number of syndrome rounds per window.
 
     Yields
     ------
-    np.ndarray or tuple[np.ndarray, np.ndarray]
-        ``X`` has shape ``(n, window_depth, ancilla_count)``, dtype bool.
-        ``y`` (only when ``with_labels=True``) has shape ``(n,)``,
-        dtype uint64.
+    SyndromeWindow
 
     Examples
     --------
-    Training loop::
+    ::
 
         from stabstream.io import load_qssf_windows
-        for X, y in load_qssf_windows("data.qssf", window_depth=5,
-                                       batch_size=512, with_labels=True):
-            # X.shape == (512, 5, 24)  — (batch, rounds, ancillas)
-            # y.shape == (512,)        — observable flip bitmasks
-            loss = model.train_step(X, y)
-
-    Inference::
-
-        for X in load_qssf_windows("live.qssf", window_depth=5):
-            predictions = model(X)
+        for win in load_qssf_windows("data.qssf", window_depth=5):
+            matrix = win.to_numpy_matrix()  # shape (5, ancilla_count)
     """
-    import collections
+    from stabstream._stabstream import SyndromeWindow
 
-    anchor_ancillas: Optional[int] = None
-    ring: "collections.deque[np.ndarray]" = collections.deque()
-    label_ring: "collections.deque[int]" = collections.deque()
-
-    x_buf: list[np.ndarray] = []
-    y_buf: list[int] = []
+    window: Optional["SyndromeWindow"] = None
 
     for frame in load_qssf(path):
-        ac = frame.ancilla_count
-        if anchor_ancillas is None:
-            anchor_ancillas = ac
-        if ac != anchor_ancillas:
-            continue
-
-        row = frame.to_numpy_detector_events()
-        label = int(frame.observable_flips or 0)
-
-        ring.append(row)
-        label_ring.append(label)
-
-        if len(ring) > window_depth:
-            ring.popleft()
-            label_ring.popleft()
-
-        if len(ring) == window_depth:
-            x_buf.append(np.stack(list(ring)))  # (window_depth, ancillas)
-            y_buf.append(label_ring[-1])
-
-            if len(x_buf) == batch_size:
-                X = np.stack(x_buf)
-                if with_labels:
-                    yield X, np.array(y_buf, dtype=np.uint64)
-                else:
-                    yield X
-                x_buf = []
-                y_buf = []
-
-    if x_buf:
-        X = np.stack(x_buf)
-        if with_labels:
-            yield X, np.array(y_buf, dtype=np.uint64)
-        else:
-            yield X
-
-
-# ---------------------------------------------------------------------------
-# ML training dataset I/O
-# ---------------------------------------------------------------------------
-
-_DATASET_MAGIC = b"SSDS"  # StabStream DataSet
-_DATASET_VERSION = 1
+        if window is None:
+            window = SyndromeWindow(
+                ancilla_count=frame.ancilla_count,
+                window_depth=window_depth,
+            )
+        window.push(frame)
+        if window.is_full():
+            yield window
+            window = SyndromeWindow(
+                ancilla_count=frame.ancilla_count,
+                window_depth=window_depth,
+            )
 
 
 def load_dataset(
     path: str,
-) -> "tuple[np.ndarray, np.ndarray]":
+) -> dict:
     """
-    Load an ML training dataset written by ``stabstream-convert dem-to-dataset``.
-
-    The file uses a compact binary layout::
-
-        magic (4 bytes): b"SSDS"
-        version (u8): 1
-        shots (u64 LE)
-        detector_count (u32 LE)
-        observable_count (u32 LE)
-        X: uint8 array, shape (shots, detector_count), row-major
-        y: uint64 array, shape (shots,), LE
+    Load a QSSF recording into an ML-ready dataset dict.
 
     Parameters
     ----------
     path:
-        Path to a ``.bin`` dataset file produced by
-        ``stabstream-convert dem-to-dataset``.
+        Filesystem path or TCP URI accepted by ``load_qssf``.
 
     Returns
     -------
-    X : np.ndarray
-        Shape ``(shots, detector_count)``, dtype ``bool``.  1 = detector
-        fired, 0 = no event.
-    y : np.ndarray
-        Shape ``(shots,)``, dtype ``uint64``.  Each value is a bitmask of
-        observable flip ground truth (bit i = 1 if observable i flipped).
+    dict
+        ``"frames"`` — list of ``SyndromeFrame`` objects.
+        ``"detector_matrix"`` — 2-D NumPy bool array, shape
+        ``(shots, ancilla_count)``.
+        ``"observable_flips"`` — 1-D NumPy uint64 array, shape ``(shots,)``.
 
     Examples
     --------
     ::
 
         from stabstream.io import load_dataset
-        X, y = load_dataset("training_data.bin")
-        # X.shape == (100000, 24) for d=5 surface code
-        # y.shape == (100000,)
+        ds = load_dataset("data.qssf")
+        X = ds["detector_matrix"]   # shape (shots, ancilla_count), dtype=bool
+        y = ds["observable_flips"]  # shape (shots,), dtype=uint64
     """
-    import struct
+    frames = list(load_qssf(path))
+    if not frames:
+        return {
+            "frames": [],
+            "detector_matrix": np.empty((0, 0), dtype=bool),
+            "observable_flips": np.empty(0, dtype=np.uint64),
+        }
 
-    with open(path, "rb") as f:
-        raw = f.read()
-
-    if len(raw) < 14:
-        raise ValueError(f"dataset file too short: {len(raw)} bytes")
-
-    if raw[:4] != _DATASET_MAGIC:
-        raise ValueError(
-            f"invalid dataset magic: {raw[:4]!r} (expected {_DATASET_MAGIC!r})"
-        )
-    if raw[4] != _DATASET_VERSION:
-        raise ValueError(
-            f"unsupported dataset version {raw[4]} (expected {_DATASET_VERSION})"
-        )
-
-    offset = 5
-    shots, det, obs = struct.unpack_from("<QII", raw, offset)
-    offset += 16  # 8 + 4 + 4
-
-    x_size = shots * det
-    y_size = shots * 8
-
-    if len(raw) < offset + x_size + y_size:
-        raise ValueError(
-            f"dataset file truncated: expected {offset + x_size + y_size} bytes, "
-            f"got {len(raw)}"
-        )
-
-    X = np.frombuffer(raw, dtype=np.uint8, count=x_size, offset=offset).reshape(
-        shots, det
+    detector_matrix = np.stack(
+        [f.to_numpy_detector_events() for f in frames]
     ).astype(bool)
-    offset += x_size
-
-    y = np.frombuffer(raw, dtype="<u8", count=shots, offset=offset)
-
-    return X, y
+    observable_flips = np.array(
+        [int(f.observable_flips or 0) for f in frames],
+        dtype=np.uint64,
+    )
+    return {
+        "frames": frames,
+        "detector_matrix": detector_matrix,
+        "observable_flips": observable_flips,
+    }
